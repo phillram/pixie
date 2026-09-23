@@ -323,6 +323,32 @@ fragment.
 
 ### What joining costs
 
+Joining gathers a scatter of anti-aliased specks as readily as it gathers the
+pieces of a real outline. From a real run:
+
+```
+found RGB(37, 254, 254) - 476 pixels in a 500x110 box, 45 pieces joined
+```
+
+Forty-five pieces of about ten pixels each, spread over half the hand, clicked
+as though it were a card. Every limit on the step passed: 476 is over the
+`Smallest patch` floor of 39, and 500x110 clears both size limits. They all
+had to pass, because **every one of them is measured on the assembled shape** -
+that is the whole point of joining, and it is also what makes joining able to
+manufacture a patch out of noise.
+
+`Ignore pieces smaller than (px)` is the one setting that runs *before*
+joining. Real pieces of an outline are hundreds of pixels; specks are tens, so
+100 separates them with room to spare and the noise is gone before joining can
+rescue it.
+
+| Ignore pieces smaller than | Patch found |
+| --- | --- |
+| 0 | 700x240, 40 pieces - specks and outline as one, leftmost is a speck |
+| 100 | 360x240, 1 piece - the outline alone |
+
+### What joining costs when the intruder is real
+
 Joining sweeps up *anything* of the same color within reach, not only pieces
 of the thing you meant. A lit prop in the background 50px from a card gets
 pulled in, and then the patch is wider than the card, and its left edge is the
@@ -452,12 +478,14 @@ measure.
 Work in this order, because each step depends on the one before:
 
 1. **Min saturation** until only the thing you want is tinted
-2. **Join pieces within** to pull that thing's fragments together
-3. **Patch at least this wide / tall** to drop any streaks that survive
-4. **If several match** to choose between the real candidates
+2. **Ignore pieces smaller than** to clear the speckle left behind
+3. **Join pieces within** to pull that thing's fragments together
+4. **Patch at least this wide / tall** to drop any streaks that survive
+5. **If several match** to choose between the real candidates
 
-Joining a dirty mask glues the mess together, which is why saturation comes
-first.
+The first three come before the rest because joining a dirty mask glues the
+mess together, and everything after joining is measured on whatever came out
+of it. Once noise is inside a patch, no later setting can get it out again.
 
 ## Two targets that touch
 

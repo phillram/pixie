@@ -457,6 +457,7 @@ class Engine:
             join=int(self._value(step, "join", 0)),
             min_width=int(self._value(step, "min_width", 0)),
             min_height=int(self._value(step, "min_height", 0)),
+            min_piece=int(self._value(step, "min_piece", 0)),
         )
         # Keep the count for the log: "1 of 3" is the difference between
         # picking the right card and picking one at random.

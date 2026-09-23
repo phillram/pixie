@@ -261,6 +261,7 @@ def _search(
     join: int = 0,
     min_width: int = 0,
     min_height: int = 0,
+    min_piece: int = 0,
 ) -> tuple[list[ColorHit], list[tuple[ColorHit, str]], np.ndarray]:
     """Everything the search knows: what passed, what did not and why, and the mask.
 
@@ -298,6 +299,21 @@ def _search(
     mask = within.astype(np.uint8)
     if not mask.any():
         return [], [], mask
+
+    # Specks go first, before anything is joined. Joining will gather a
+    # scatter of anti-aliased pixels into one "patch" just as readily as it
+    # gathers the pieces of a real outline -- forty pieces of ten pixels each
+    # become four hundred, which then passes `min_pixels` and every size limit
+    # below, because those are all measured on the assembled shape. Nothing
+    # further down can undo that, so the only place to catch it is here.
+    if min_piece > 0:
+        speck_count, speck_labels, speck_stats, _ = \
+            cv2.connectedComponentsWithStats(mask, connectivity=8)
+        big_enough = np.zeros(speck_count, dtype=bool)
+        big_enough[1:] = speck_stats[1:, cv2.CC_STAT_AREA] >= min_piece
+        mask = big_enough[speck_labels].astype(np.uint8)
+        if not mask.any():
+            return [], [], mask
 
     # Connected blobs, so two separate glows don't average into a meaningless
     # point between them.
@@ -422,11 +438,12 @@ def find_colors(
     join: int = 0,
     min_width: int = 0,
     min_height: int = 0,
+    min_piece: int = 0,
 ) -> list[ColorHit]:
     """Every patch of `target_rgb` inside `region`, in the order asked for."""
     return _search(region, target_rgb, tolerance, min_pixels, match,
                    min_saturation, min_brightness, order, join,
-                   min_width, min_height)[0]
+                   min_width, min_height, min_piece)[0]
 
 
 @dataclass(frozen=True)
@@ -591,6 +608,7 @@ def explain_colors(
     join: int = 0,
     min_width: int = 0,
     min_height: int = 0,
+    min_piece: int = 0,
 ) -> tuple[np.ndarray, list[tuple[ColorHit, str]], list[tuple[ColorHit, str]]]:
     """A picture of what matched, plus the patches kept and the ones dropped.
 
@@ -601,7 +619,7 @@ def explain_colors(
     """
     kept, dropped, mask = _search(region, target_rgb, tolerance, min_pixels,
                                   match, min_saturation, min_brightness, order,
-                                  join, min_width, min_height)
+                                  join, min_width, min_height, min_piece)
 
     picture = grab(region).copy()
     # How saturated each patch actually is. This is the number that separates
@@ -654,11 +672,12 @@ def find_color(
     join: int = 0,
     min_width: int = 0,
     min_height: int = 0,
+    min_piece: int = 0,
 ) -> ColorHit | None:
     """The one patch of `target_rgb` that `order` puts first. See find_colors."""
     hits = find_colors(region, target_rgb, tolerance, min_pixels, match,
                        min_saturation, min_brightness, order, join,
-                       min_width, min_height)
+                       min_width, min_height, min_piece)
     return hits[0] if hits else None
 
 

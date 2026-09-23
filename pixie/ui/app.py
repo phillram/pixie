@@ -2105,6 +2105,7 @@ class App:
                 join=int(self._setting(step, "join")),
                 min_width=int(self._setting(step, "min_width")),
                 min_height=int(self._setting(step, "min_height")),
+                min_piece=int(self._setting(step, "min_piece")),
             )
         except Exception as error:  # noqa: BLE001 - report, don't disappear
             self.log(f"Could not look at that area: {error!r}", "error")

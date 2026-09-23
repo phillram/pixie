@@ -113,6 +113,7 @@ def main() -> int:
     failures.extend(_check_a_mostly_hidden_outline())
     failures.extend(_check_a_speck_swept_up_by_the_join())
     failures.extend(_check_the_shape_split_is_suggested())
+    failures.extend(_check_specks_are_dropped_before_joining())
     failures.extend(_check_a_section_with_nothing_switched_on())
     failures.extend(_check_every_wait_respects_the_cap())
     failures.extend(_check_declared_defaults())
@@ -827,6 +828,74 @@ def _check_a_mostly_hidden_outline() -> list[str]:
     if any(piece.height >= 90 for piece in in_pieces):
         print(f"                  (tallest loose piece "
               f"{max(p.height for p in in_pieces)}px)")
+    return problems
+
+
+def _check_specks_are_dropped_before_joining() -> list[str]:
+    """A scatter of specks must not add up to a patch.
+
+    Joining gathers anti-aliased noise as readily as it gathers the pieces of
+    a real outline. From a real run: 45 pieces totalling 476 pixels, spread
+    over a 500x110 box, reported as a find and clicked. Every limit on the
+    step passed, because they are all measured on the assembled shape - 476
+    pixels is over the 39 floor, and 500x110 is over both size floors.
+
+    Dropping the specks *before* joining is the only place this can be caught.
+    """
+    from pixie.system import screen as screen_mod
+
+    def hsv(h, s, v):
+        return tuple(int(c) for c in cv2.cvtColor(
+            np.array([[[h, s, v]]], dtype=np.uint8), cv2.COLOR_HSV2BGR)[0, 0])
+
+    glow = hsv(90, 250, 250)
+    frame = np.zeros((320, 900, 3), dtype=np.uint8)
+    # 45 specks of about 10 pixels each, scattered the way anti-aliasing is.
+    spread = np.random.default_rng(7)
+    for n in range(45):
+        x = 60 + (n * 11) % 500
+        y = 40 + (n * 37) % 110
+        frame[y : y + 3, x : x + 4] = glow
+    # ...and, well away from them, a real outline made of chunky fragments.
+    for y0, y1, x0, x1 in ((40, 60, 400, 760), (260, 280, 400, 760),
+                           (40, 280, 400, 420), (40, 280, 740, 760)):
+        frame[y0:y1, x0:x1] = glow
+
+    original = screen_mod.grab
+    screen_mod.grab = lambda _region=None: frame
+    try:
+        common = dict(region=(0, 0, 900, 320), target_rgb=(37, 254, 254),
+                      tolerance=14, min_pixels=39, match="hue",
+                      order="leftmost", join=40)
+        noisy = screen_mod.find_colors(**common)
+        clean = screen_mod.find_colors(min_piece=100, **common)
+        # The outline's own fragments are chunky, so a floor well above speck
+        # size must still leave it alone.
+        generous = screen_mod.find_colors(min_piece=1000, **common)
+    finally:
+        screen_mod.grab = original
+
+    problems = []
+    print(f"Specks          : {len(noisy)} patches with every piece kept, "
+          f"{len(clean)} once pieces under 100px go")
+    if not noisy:
+        return ["the specks did not survive at all, so this test is not "
+                "reproducing the problem it is about"]
+    if noisy[0].left >= 400:
+        problems.append("the specks were not picked ahead of the outline, so "
+                        "this no longer reproduces the failure")
+    if len(clean) != 1:
+        problems.append(f"dropping specks left {len(clean)} patches, expected "
+                        "just the outline")
+        return problems
+    if clean[0].left < 380 or clean[0].width < 300:
+        problems.append(f"what survived is {clean[0].width}px at "
+                        f"{clean[0].left}, which is not the outline")
+    print(f"                  outline survives at {clean[0].left}, "
+          f"{clean[0].width}x{clean[0].height}, {clean[0].pieces} piece(s)")
+
+    if not generous:
+        problems.append("a 1000px floor threw the real outline away too")
     return problems
 
 

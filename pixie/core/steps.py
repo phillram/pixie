@@ -176,6 +176,17 @@ _JOIN_HINT = (
     "for a card border - and the whole outline becomes one patch whose middle "
     "is the middle of the card."
 )
+_SPECK_HINT = (
+    "Throws away pieces this small before anything is joined.\n"
+    "Joining is what makes a broken outline one shape again, but it will "
+    "happily gather up a scatter of anti-aliased specks too - forty pieces of "
+    "ten pixels each become one 'patch' of four hundred, which then sails "
+    "past 'Smallest patch' and every size limit, because those are measured "
+    "on the assembled shape.\n"
+    "Real pieces of an outline are hundreds of pixels; the specks are tens. "
+    "Set this between the two - 100 is a good start - and the noise is gone "
+    "before joining can rescue it. 0 keeps every piece."
+)
 _SIZE_HINT = (
     "Ignore anything smaller than this. Two numbers, because the thing that "
     "catches people out is a background which happens to share the color: a "
@@ -382,6 +393,8 @@ STEP_TYPES: dict[str, StepType] = {
             Field("min_pixels", "integer", "Smallest patch (pixels)", 40, minimum=1, maximum=100000,
                   hint="Ignore patches smaller than this many pixels, so stray "
                        "matching pixels elsewhere don't count."),
+            Field("min_piece", "integer", "Ignore pieces smaller than (px)", 0,
+                  minimum=0, maximum=100000, hint=_SPECK_HINT),
             Field("join", "integer", "Join pieces within (px)", 0,
                   minimum=0, maximum=400, hint=_JOIN_HINT),
             Field("min_width", "integer", "Patch at least this wide (px)", 0,
@@ -417,6 +430,8 @@ STEP_TYPES: dict[str, StepType] = {
             Field("min_pixels", "integer", "Smallest patch (pixels)", 40,
                   minimum=1, maximum=100000,
                   hint="Ignore patches smaller than this, so a few stray matching pixels elsewhere don't count as a find."),
+            Field("min_piece", "integer", "Ignore pieces smaller than (px)", 0,
+                  minimum=0, maximum=100000, hint=_SPECK_HINT),
             Field("join", "integer", "Join pieces within (px)", 0,
                   minimum=0, maximum=400, hint=_JOIN_HINT),
             Field("min_width", "integer", "Patch at least this wide (px)", 0,
