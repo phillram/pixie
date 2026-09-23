@@ -66,9 +66,14 @@ class Settings:
     cycle_pause_max: float = 1.0
     failsafe_corner: bool = True
     # Where to send the cursor after each step: "off", "center" (middle of the
-    # primary monitor) or "custom" (park_point).
+    # primary monitor) or "custom" (park_box).
     park_mouse: str = "off"
-    park_point: list[int] | None = None
+    # A box, and a fresh random point inside it every time. One spot, hit
+    # exactly, every few seconds, for hours, is not what a hand does.
+    park_box: list[int] | None = None
+    # Travel there rather than appearing there. An application that tracks
+    # hover never sees a warped cursor cross anything.
+    park_glide: bool = False
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> "Settings":
@@ -88,6 +93,15 @@ class Settings:
             data["section_pause_min"] = data["cycle_pause_min"]
             data.setdefault("section_pause_max", data.get("cycle_pause_max",
                                                           data["cycle_pause_min"]))
+        # The parking spot used to be a single point. A point is a box with
+        # no width, so an older sequence keeps hitting exactly where it always
+        # did until the box is widened.
+        if "park_point" in data and "park_box" not in data:
+            point = data.pop("park_point")
+            if point:
+                data["park_box"] = [int(point[0]), int(point[1]), 1, 1]
+        data.pop("park_point", None)
+
         known = {f: data[f] for f in cls.__dataclass_fields__ if f in data}
         return cls(**known)
 
@@ -99,6 +113,13 @@ class Settings:
 
     def cycle_pause(self) -> float:
         return _between(self.cycle_pause_min, self.cycle_pause_max)
+
+
+def _somewhere_in(box: list[int]) -> tuple[int, int]:
+    """A random point inside a box, which may be a single pixel wide."""
+    left, top, width, height = (list(box) + [1, 1])[:4]
+    return (random.randint(int(left), int(left) + max(0, int(width) - 1)),
+            random.randint(int(top), int(top) + max(0, int(height) - 1)))
 
 
 def _between(low: float, high: float) -> float:
@@ -463,8 +484,38 @@ class Engine:
         region = self._region(step.get("region"))
         confidence = float(self._value(step, "confidence", 0.85))
         name = Path(step["image"]).name
-        return self._poll_until(
+        match = self._poll_until(
             lambda: screen.find_template(template, region, confidence), timeout, name)
+        if match is None:
+            self._how_close(template, region, confidence)
+        return match
+
+    def _how_close(self, template, region, confidence: float) -> None:
+        """Say how well the picture did match, when it did not match enough.
+
+        "It did not appear" is the same sentence whether the picture was a
+        hair under the threshold or nothing like what is on screen, and those
+        want opposite fixes: one wants the confidence nudged down, the other
+        wants a different picture entirely. The score tells them apart at a
+        glance, and costs one extra comparison on a path that has already
+        given up and spent its whole timeout.
+        """
+        try:
+            score = screen.best_score(template, region)
+        except Exception:  # noqa: BLE001 - a diagnostic must never be the fault
+            return
+        note = f"    the best match anywhere in that area scored {score:.2f}"
+        if score >= confidence - 0.06:
+            note += (f", just under the {confidence:g} it needs. Lower "
+                     "'How sure' a little.")
+        elif score < 0.5:
+            note += (", which is nothing like it. The picture is of something "
+                     "that is not on screen, or the area is in the wrong place.")
+        else:
+            note += (f", well under the {confidence:g} it needs. Something like "
+                     "it is there but has changed - recapture the picture, and "
+                     "keep it small and away from anything that animates.")
+        self.log(note, "warn")
 
     def _do_wait_for_color(self, step: dict[str, Any]) -> str:
         x, y = step["pos"]
@@ -795,17 +846,31 @@ class Engine:
         mode = self.sequence.settings.park_mouse
         if mode == "center":
             return screen.primary_center()
-        if mode == "custom" and self.sequence.settings.park_point:
-            x, y = self.sequence.settings.park_point
-            return int(x), int(y)
+        if mode == "custom" and self.sequence.settings.park_box:
+            return _somewhere_in(self.sequence.settings.park_box)
         return None
+
+    def _park_description(self) -> str:
+        """Where the cursor goes and how, in words, for the opening log line."""
+        how = "moves" if self.sequence.settings.park_glide else "returns"
+        settings = self.sequence.settings
+        if settings.park_mouse == "center":
+            x, y = screen.primary_center()
+            return f"{how} to the middle of the screen, {x}, {y},"
+        left, top, width, height = (list(settings.park_box or []) + [1, 1])[:4]
+        if width <= 1 and height <= 1:
+            return f"{how} to {left}, {top}"
+        return f"{how} somewhere in the {width}x{height} box at {left}, {top}"
 
     def _park_mouse(self) -> None:
         """Move the cursor out of the way so it can't sit over the next target."""
         target = self._park_target()
         if target is None or self.dry_run:
             return
-        mouse.move_to(*target)
+        if self.sequence.settings.park_glide:
+            mouse.glide_to(*target)
+        else:
+            mouse.move_to(*target)
 
     # -- the loop --------------------------------------------------------
 
@@ -1027,9 +1092,8 @@ class Engine:
             self.log(warning, "warn")
         if self.dry_run:
             self.log("DRY RUN - detecting and logging only, nothing will be clicked.", "warn")
-        parked = self._park_target()
-        if parked:
-            self.log(f"Cursor returns to {parked[0]}, {parked[1]} after each step."
+        if self._park_target():
+            self.log(f"Cursor {self._park_description()} after each step."
                      + ("  [not in dry run]" if self.dry_run else ""), "muted")
 
         reason = "stopped"

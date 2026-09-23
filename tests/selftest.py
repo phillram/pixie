@@ -105,6 +105,8 @@ def main() -> int:
     failures.extend(_check_restart_section())
     failures.extend(_check_a_check_guards_its_indented_steps())
     failures.extend(_check_a_jump_sends_the_run_somewhere())
+    failures.extend(_check_parking_and_gliding())
+    failures.extend(_check_a_near_miss_reports_its_score())
     failures.extend(_check_max_cycles_is_a_real_limit())
     failures.extend(_check_section_limits())
     failures.extend(_check_pick_order())
@@ -454,6 +456,104 @@ def _check_a_jump_sends_the_run_somewhere() -> list[str]:
     # the same branches rather than two copies of them.
     if not set(step_defs.JUMP_TARGETS) <= set(step_defs.ON_TIMEOUT):
         problems.append("a jump can go somewhere no 'if not found' can")
+    return problems
+
+
+def _check_parking_and_gliding() -> list[str]:
+    """The cursor parks somewhere in a box, and can travel rather than warp."""
+    from pixie.system import mouse as mouse_mod
+
+    problems = []
+    sequence = engine_mod.Sequence(
+        name="parking",
+        settings=engine_mod.Settings(park_mouse="custom",
+                                     park_box=[1000, 500, 200, 100]))
+    runner = engine_mod.Engine(sequence)
+
+    spots = {runner._park_target() for _ in range(200)}
+    outside = [(x, y) for x, y in spots
+               if not (1000 <= x < 1200 and 500 <= y < 600)]
+    print(f"Parking         : {len(spots)} different spots in 200 goes, "
+          f"{len(outside)} outside the box")
+    if outside:
+        problems.append(f"parked outside the box: {outside[:3]}")
+    if len(spots) < 50:
+        problems.append(f"only {len(spots)} distinct spots in 200 - a box is "
+                        "meant to vary, not repeat")
+
+    # A one-pixel box is a point, which is what an older sequence becomes.
+    older = engine_mod.Settings.from_dict({"park_mouse": "custom",
+                                           "park_point": [640, 480]})
+    if older.park_box != [640, 480, 1, 1]:
+        problems.append(f"an older parking point became {older.park_box}")
+    exact = engine_mod.Engine(engine_mod.Sequence(name="x", settings=older))
+    if {exact._park_target() for _ in range(20)} != {(640, 480)}:
+        problems.append("a one-pixel box did not park exactly on its point")
+
+    # Gliding visits places along the way; warping visits nothing.
+    visited: list[tuple[int, int]] = []
+    real_move, real_position = mouse_mod.move_to, mouse_mod.position
+    mouse_mod.move_to = lambda x, y: visited.append((int(x), int(y)))
+    mouse_mod.position = lambda: (0, 0)
+    try:
+        mouse_mod.glide_to(600, 400, seconds=0)
+    finally:
+        mouse_mod.move_to, mouse_mod.position = real_move, real_position
+
+    print(f"Gliding         : {len(visited)} moves from 0,0 to 600,400, "
+          f"ending {visited[-1] if visited else None}")
+    if len(visited) < 5:
+        problems.append(f"a glide across the screen took {len(visited)} moves")
+    if visited[-1] != (600, 400):
+        problems.append(f"the glide ended at {visited[-1]}, not the target")
+    # Eased, so it does not crawl at a constant speed the whole way.
+    steps = [visited[n + 1][0] - visited[n][0] for n in range(len(visited) - 1)]
+    if max(steps) - min(steps) < 2:
+        problems.append("the glide moved at a constant speed, so it is not eased")
+    return problems
+
+
+def _check_a_near_miss_reports_its_score() -> list[str]:
+    """A picture that does not match must say how close it got.
+
+    "It did not appear" reads the same whether the picture was a hair under
+    the threshold or nothing like what is on screen - and those want opposite
+    fixes. One wants the confidence nudged; the other wants a new picture.
+    """
+    said: list[str] = []
+    runner = engine_mod.Engine(
+        engine_mod.Sequence(name="scores"),
+        emit=lambda event: said.append(str(event.get("message", ""))))
+
+    template = np.zeros((20, 20, 3), dtype=np.uint8)
+    problems = []
+    for score, expected in ((0.82, "Lower"), (0.31, "nothing like it"),
+                            (0.60, "recapture")):
+        said.clear()
+        original = screen.best_score
+        screen.best_score = lambda *_a, **_k: score
+        try:
+            runner._how_close(template, None, 0.85)
+        finally:
+            screen.best_score = original
+        if not said:
+            problems.append(f"a best score of {score} was not reported at all")
+        elif f"{score:.2f}" not in said[0] or expected not in said[0]:
+            problems.append(f"a score of {score} said {said[0]!r}, expected it "
+                            f"to mention {expected!r}")
+    print("Near miss       : 0.82 -> lower the threshold, 0.31 -> wrong "
+          "picture, 0.60 -> recapture")
+
+    # A diagnostic must never become the failure it is diagnosing.
+    said.clear()
+    original = screen.best_score
+    screen.best_score = lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("no"))
+    try:
+        runner._how_close(template, None, 0.85)
+    finally:
+        screen.best_score = original
+    if said:
+        problems.append(f"a broken diagnostic said something anyway: {said}")
     return problems
 
 

@@ -237,16 +237,31 @@ class SettingsDialog:
                                   width=26, values=list(PARK_LABELS.values()))
         park_combo.pack(side="left")
 
-        self.park_point = list(settings.park_point) if settings.park_point else None
-        self.park_point_label = ttk.Label(park_box, text=self._park_point_text(),
-                                          style="Muted.TLabel")
-        ttk.Button(park_box, text="Pick spot...", style="Tool.TButton",
-                   command=self._pick_park_point).pack(side="left", padx=(8, 0))
-        self.park_point_label.pack(side="left", padx=(8, 0))
+        self.park_area = list(settings.park_box) if settings.park_box else None
+        self.park_area_label = ttk.Label(park_box, text=self._park_area_text(),
+                                         style="Muted.TLabel")
+        ttk.Button(park_box, text="Pick area...", style="Tool.TButton",
+                   command=self._pick_park_area).pack(side="left", padx=(8, 0))
+        self.park_area_label.pack(side="left", padx=(8, 0))
         row += 1
         ttk.Label(frame, text="Parks the cursor somewhere harmless so it can't sit "
                               "over the next thing Pixie needs to see. 'Middle of the "
-                              "screen' means the middle of your primary monitor.",
+                              "screen' means the middle of your primary monitor.\n"
+                              "Drag a box rather than clicking one spot and the "
+                              "cursor lands somewhere different inside it every time.",
+                  style="Muted.TLabel", wraplength=int(440 * scale),
+                  justify="left").grid(row=row, column=0, columnspan=2,
+                                       sticky="w", pady=(0, 10))
+        row += 1
+
+        self.glide_var = tk.BooleanVar(value=settings.park_glide)
+        ttk.Checkbutton(frame, text="Move the cursor there rather than warping it",
+                        variable=self.glide_var).grid(row=row, column=0, columnspan=2,
+                                                      sticky="w")
+        row += 1
+        ttk.Label(frame, text="A warped cursor is somewhere, then somewhere else, "
+                              "having crossed nothing in between. Moving takes about "
+                              "a quarter of a second and passes over what is in the way.",
                   style="Muted.TLabel", wraplength=int(440 * scale),
                   justify="left").grid(row=row, column=0, columnspan=2,
                                        sticky="w", pady=(0, 10))
@@ -270,20 +285,23 @@ class SettingsDialog:
         y = parent.winfo_rooty() + (parent.winfo_height() - self.window.winfo_height()) // 3
         self.window.geometry(f"+{x}+{y}")
 
-    def _park_point_text(self) -> str:
-        if not self.park_point:
-            return "no spot picked yet"
-        return f"{self.park_point[0]}, {self.park_point[1]}"
+    def _park_area_text(self) -> str:
+        if not self.park_area:
+            return "no area picked yet"
+        left, top, width, height = (list(self.park_area) + [1, 1])[:4]
+        if width <= 1 and height <= 1:
+            return f"{left}, {top}"
+        return f"{width}x{height} at {left}, {top}"
 
-    def _pick_park_point(self) -> None:
-        """Let the user click the spot, with this dialog out of the way."""
+    def _pick_park_area(self) -> None:
+        """Let the user drag the area, with this dialog out of the way."""
         self.window.withdraw()
         try:
-            picker = capture.Picker("point", parent=self.window)
+            picker = capture.Picker("area", parent=self.window)
             picker.run()
             if picker.result is not None:
-                self.park_point = list(picker.to_absolute(picker.result))
-                self.park_point_label.configure(text=self._park_point_text())
+                self.park_area = list(picker.to_absolute(picker.result))
+                self.park_area_label.configure(text=self._park_area_text())
                 self.park_var.set(PARK_LABELS["custom"])
         finally:
             self.window.deiconify()
@@ -311,11 +329,12 @@ class SettingsDialog:
         # setting and looked exactly like Pixie forgetting it.
         self.settings.park_mouse = PARK_MODES.get(self.park_var.get(),
                                                   self.settings.park_mouse)
-        self.settings.park_point = self.park_point
-        if self.settings.park_mouse == "custom" and not self.park_point:
+        self.settings.park_box = self.park_area
+        self.settings.park_glide = bool(self.glide_var.get())
+        if self.settings.park_mouse == "custom" and not self.park_area:
             messagebox.showwarning(
-                "No spot picked",
-                "Pick the spot to move the cursor to, or choose a different option.")
+                "No area picked",
+                "Drag the area to move the cursor into, or choose a different option.")
             self.saved = False
             return
         self.saved = True

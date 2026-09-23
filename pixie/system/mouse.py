@@ -7,6 +7,7 @@ games and anything using raw input especially -- actually react to it.
 from __future__ import annotations
 
 import ctypes
+import math
 import time
 from ctypes import wintypes
 
@@ -55,6 +56,43 @@ def position() -> tuple[int, int]:
 
 def move_to(x: int, y: int) -> None:
     _user32.SetCursorPos(int(x), int(y))
+
+
+# How a glide is drawn: a step every few pixels, and a cap so crossing a wide
+# desktop does not take all day.
+GLIDE_STEP = 24
+GLIDE_MAX_STEPS = 60
+
+
+def glide_to(x: int, y: int, seconds: float = 0.25) -> None:
+    """Travel to (x, y) instead of appearing there.
+
+    Warping the cursor is one event: the pointer is somewhere, then it is
+    somewhere else, having crossed nothing. Applications that track hover
+    never see it pass over anything, and some never register that it left
+    where it was. Moving in steps looks to them like an ordinary hand.
+
+    Eased at both ends, because a constant-speed slide is its own tell.
+    """
+    from_x, from_y = position()
+    x, y = int(x), int(y)
+    distance = math.hypot(x - from_x, y - from_y)
+    if distance < 1:
+        move_to(x, y)
+        return
+
+    count = max(2, min(GLIDE_MAX_STEPS, int(distance // GLIDE_STEP)))
+    pause = max(0.0, seconds) / count
+    for step in range(1, count + 1):
+        # Ease in and out: slow at the start, quickest in the middle, slow
+        # into the target.
+        fraction = step / count
+        eased = fraction * fraction * (3 - 2 * fraction)
+        move_to(round(from_x + (x - from_x) * eased),
+                round(from_y + (y - from_y) * eased))
+        if pause:
+            time.sleep(pause)
+    move_to(x, y)
 
 
 def click(

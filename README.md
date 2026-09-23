@@ -25,6 +25,8 @@ Windows only. Dark themed.
   finds what it is looking for
 * Tell a match apart from the background by where it sits, not only by its
   color: require it to run off a given edge of the search area
+* Park the cursor in a box rather than on a pixel, and move it there rather
+  than warping it
 
 Every pause can be a range rather than a fixed number, so the timing varies.
 Steps, sections and whole cycles each get their own, so you can have a delay
@@ -208,6 +210,35 @@ image if it appears` without opening both.
 The grouping lives in `STEP_GROUPS` in `pixie/core/steps.py` next to the step
 types themselves, and `check_wiring.py` fails if a type is declared without a
 place in the menu - since the menu is the only way to create one.
+
+### When a picture does not match
+
+"It did not appear" reads the same whether the picture was a hair under the
+threshold or nothing like what is on screen - and those want opposite fixes.
+So the log says how close it got:
+
+```
+check_if_game_ended.png did not appear after 1s
+    the best match anywhere in that area scored 0.42, which is nothing like
+    it. The picture is of something that is not on screen, or the area is in
+    the wrong place.
+```
+
+| Score | What it means |
+| --- | --- |
+| Just under the threshold | Lower `How sure` a little |
+| Around 0.5 to 0.8 | Something like it is there but has changed. Recapture |
+| Below 0.5 | Wrong picture, or the search area is in the wrong place |
+
+It costs one extra comparison, on a path that has already given up and spent
+its whole timeout, so it is free in every sense that matters.
+
+**Keep template pictures small and away from anything that animates.** A big
+capture of a screen with a pulsing glow, a semi-transparent overlay, or a
+changing background behind it can never score highly, because most of what is
+in the picture is different every frame. A small, solid, high-contrast piece
+of interface - a button, a label - matches far more reliably than a large
+region containing it.
 
 ### When something does not turn up
 
@@ -703,6 +734,22 @@ The log says when there was a choice to make:
 found RGB(37, 254, 254) - 8680 pixels in a 180x250 box, center 640, 900
     - 3 patches matched, took the one furthest left
 ```
+
+### Parking the cursor
+
+`After each step` sends the cursor somewhere harmless so it cannot sit over
+the next thing Pixie needs to look at. Two things make it less mechanical:
+
+* **Pick area...** drags a box rather than clicking one spot, and the cursor
+  lands somewhere different inside it every time. One pixel, hit exactly,
+  every few seconds for hours, is not what a hand does.
+* **Move the cursor there rather than warping it** travels to the spot over
+  about a quarter of a second, eased at both ends, instead of teleporting.
+  A warped cursor is somewhere, then somewhere else, having crossed nothing
+  in between - applications that track hover never see it pass over anything.
+
+A sequence saved before this had a single point, which becomes a box one pixel
+across: it carries on landing exactly where it always did until you widen it.
 
 ## Speed
 
