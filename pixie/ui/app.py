@@ -325,8 +325,8 @@ class App:
         "image": "_field_image", "point": "_field_point", "color": "_field_color",
         "region": "_field_region", "box": "_field_box", "choice": "_field_choice",
         "integer": "_field_integer", "offset": "_field_offset", "key": "_field_key",
-        "pause": "_field_pause", "multiline": "_field_multiline",
-        "number": "_field_number",
+        "pause": "_field_pause", "limit": "_field_limit",
+        "multiline": "_field_multiline", "number": "_field_number",
     }
 
     def __init__(self, root: tk.Tk) -> None:
@@ -683,6 +683,11 @@ class App:
             self.listbox.itemconfigure(index, foreground=color)
         if was_selected:
             self.listbox.selection_set(index)
+        if index == self.lit_section:
+            # Reinserting the row threw away its colors, and this one is the
+            # section currently running.
+            self.listbox.itemconfigure(index, background=theme.ACCENT_DARK,
+                                       foreground="#ffffff")
 
     def refresh_list(self, keep: int | None = None) -> None:
         selection = keep if keep is not None else self.selected
@@ -759,9 +764,62 @@ class App:
         step = self.current_step()
         if step is None:
             return
-        self.sequence.steps.pop(self.selected)
+        removed = self.sequence.steps.pop(self.selected)
         self.mark_dirty()
         self.refresh_list(keep=max(0, self.selected - 1))
+        self._offer_to_delete_image(removed)
+
+    def _offer_to_delete_image(self, removed: dict[str, Any]) -> None:
+        """A deleted step's picture is dead weight, but only if nothing else
+        uses it. Duplicated steps share one file, and so can two sequences."""
+        relative = str(removed.get("image") or "")
+        if not relative or self._image_is_used(relative):
+            return
+        path = Path(relative)
+        if not path.is_absolute():
+            path = PROJECT_DIR / path
+        if not path.exists():
+            return
+
+        if not messagebox.askyesno(
+                "Delete the picture too?",
+                f"Nothing else uses {path.name}.\n\nDelete the file as well, or "
+                "keep it in images/ in case you want it back?",
+                default="no"):
+            return
+        try:
+            path.unlink()
+        except OSError as error:
+            self.log(f"Could not delete {path.name}: {error}", "warn")
+            return
+        self.log(f"Deleted {path.name}.", "muted")
+
+    def _image_is_used(self, relative: str) -> bool:
+        """Is this picture referenced by any step, here or in another sequence?
+
+        The sequence being edited is checked in memory, because what is on
+        disk is out of date the moment you change anything. Every other saved
+        sequence is checked as a file -- deleting a picture that another job
+        depends on would be a nasty surprise for a bit of tidiness.
+        """
+        if any(str(step.get("image") or "") == relative
+               for step in self.sequence.steps):
+            return True
+
+        here = self.sequence.path.resolve() if self.sequence.path else None
+        for other in SEQUENCES_DIR.glob("*.json"):
+            if here is not None and other.resolve() == here:
+                continue
+            try:
+                data = json.loads(other.read_text(encoding="utf-8"))
+                steps = data.get("steps", [])
+            except (OSError, ValueError, AttributeError):
+                continue  # unreadable: assume nothing, keep the picture
+            if any(str(step.get("image") or "") == relative for step in steps):
+                self.log(f"{Path(relative).name} is still used by {other.name}, "
+                         "so it stays.", "muted")
+                return True
+        return False
 
     def move_up(self) -> None:
         self._move(-1)
@@ -1036,7 +1094,13 @@ class App:
         holder.grid(row=row, column=1, columnspan=2, sticky="w", pady=4)
 
         settings = self.sequence.settings
-        default_text = _range_text(settings.step_pause_min, settings.step_pause_max)
+        # A section's pause overrides the between-sections default, not the
+        # between-steps one, so it must quote the right number back at you.
+        if step.get("type") == "section":
+            default_text = _range_text(settings.section_pause_min,
+                                       settings.section_pause_max)
+        else:
+            default_text = _range_text(settings.step_pause_min, settings.step_pause_max)
         use_default = tk.BooleanVar(value=value is None)
         low = tk.StringVar(value=str(value[0]) if value else "0.5")
         high = tk.StringVar(value=str(value[1]) if value else "1.5")
@@ -1074,6 +1138,45 @@ class App:
             entry.configure(state="disabled" if use_default.get() else "normal")
         self.field_vars[spec.key] = low
 
+    def _field_limit(self, step: dict[str, Any], spec: step_defs.Field,
+                     row: int) -> None:
+        """One optional number: either off, or a value. Stored as None or a float."""
+        value = step.get(spec.key)
+        holder = ttk.Frame(self.editor, style="Panel.TFrame")
+        holder.grid(row=row, column=1, columnspan=2, sticky="w", pady=4)
+
+        off = tk.BooleanVar(value=not value)
+        amount = tk.StringVar(value=str(value) if value else "3")
+
+        check = ttk.Checkbutton(holder, text="Let every step decide for itself",
+                                variable=off)
+        check.pack(anchor="w")
+        line = ttk.Frame(holder, style="Panel.TFrame")
+        line.pack(anchor="w", pady=(4, 0))
+        ttk.Label(line, text="or instead, never wait longer than",
+                  style="Panel.TLabel").pack(side="left")
+        # Parented to the line, not the holder: a widget packs inside its own
+        # parent whatever you pack it into, so getting this wrong puts the box
+        # on its own row above the sentence it belongs in.
+        entry = ttk.Entry(line, textvariable=amount, width=6)
+        entry.pack(side="left", padx=6)
+        ttk.Label(line, text="seconds", style="Panel.TLabel").pack(side="left")
+
+        def store(*_args: object) -> None:
+            entry.configure(state="disabled" if off.get() else "normal")
+            if off.get():
+                self._set_value(step, spec.key, None)
+                return
+            try:
+                self._set_value(step, spec.key, max(0.0, float(amount.get())))
+            except (TypeError, ValueError):
+                pass  # mid-typing
+
+        check.configure(command=store)
+        amount.trace_add("write", store)
+        entry.configure(state="disabled" if off.get() else "normal")
+        self.field_vars[spec.key] = amount
+
     def _field_multiline(self, step: dict[str, Any], spec: step_defs.Field,
                          row: int) -> None:
         box = theme.text(self.editor, height=6, wrap="word")
@@ -1103,20 +1206,39 @@ class App:
         var.set(chosen)
         self.log(f"Key set to {chosen}", "good")
 
-    def _field_choice(self, step: dict[str, Any], spec: step_defs.Field, row: int) -> None:
-        var = tk.StringVar(value=str(step.get(spec.key, spec.default)))
-        combo = ttk.Combobox(self.editor, textvariable=var, values=list(spec.choices),
+    def _field_choice(self, step: dict[str, Any], spec: step_defs.Field, row: int) -> int:
+        """A dropdown that reads as English but stores the short value.
+
+        The file keeps 'next_section'; the box says 'Move on to the next
+        section'. Nobody should have to learn our vocabulary to use this.
+        """
+        labels = step_defs.CHOICE_LABELS.get(spec.key, {})
+        shown = {value: labels.get(value, value) for value in spec.choices}
+        stored = {text: value for value, text in shown.items()}
+
+        current = str(step.get(spec.key, spec.default))
+        var = tk.StringVar(value=shown.get(current, current))
+        combo = ttk.Combobox(self.editor, textvariable=var, values=list(shown.values()),
                              state="readonly")
-        combo.grid(row=row, column=1, sticky="ew", pady=4)
-        var.trace_add("write", lambda *_: self._set_value(step, spec.key, var.get()))
+        combo.grid(row=row, column=1, columnspan=2, sticky="ew", pady=4)
+        var.trace_add("write",
+                      lambda *_: self._set_value(step, spec.key,
+                                                 stored.get(var.get(), var.get())))
         self.field_vars[spec.key] = var
-        if spec.key == "on_timeout":
-            note = ttk.Label(self.editor, style="Blurb.TLabel",
-                             text=step_defs.ON_TIMEOUT_LABELS.get(var.get(), ""))
-            note.grid(row=row, column=2, sticky="w", padx=(8, 0))
-            var.trace_add("write",
-                          lambda *_: note.configure(
-                              text=step_defs.ON_TIMEOUT_LABELS.get(var.get(), "")))
+
+        notes = step_defs.CHOICE_NOTES.get(spec.key)
+        if not notes:
+            return 0
+
+        # The one-line consequence of the choice, under the box, because "If
+        # not found: start the whole sequence again" is worth spelling out.
+        note = ttk.Label(self.editor, style="Blurb.TLabel", justify="left",
+                         wraplength=int(520 * self.scale),
+                         text=notes.get(current, ""))
+        note.grid(row=row + 1, column=1, columnspan=2, sticky="w", pady=(0, 6))
+        var.trace_add("write", lambda *_: note.configure(
+            text=notes.get(stored.get(var.get(), var.get()), "")))
+        return 1
 
     def _field_integer(self, step: dict[str, Any], spec: step_defs.Field, row: int) -> None:
         var = tk.StringVar(value=str(step.get(spec.key, spec.default)))
@@ -1421,9 +1543,17 @@ class App:
             self.start_run()
 
     def _hotkey(self) -> str | None:
-        """The start/stop key, or None if there isn't one."""
+        """The start/stop key, or None if there isn't one.
+
+        A file edited by hand can set it to the same key as the stop key,
+        which would start the run and abort it in the same breath, leaving
+        Pixie apparently unable to start. Settings will not let you do that;
+        this makes sure a file cannot either.
+        """
         key = str(self.sequence.settings.toggle_key or "").strip()
-        return None if key.lower() in ("", "off", "none") else key
+        if key.lower() in ("", "off", "none"):
+            return None
+        return None if key == self.sequence.settings.abort_key else key
 
     def _poll_hotkey(self) -> None:
         """Watch for the start/stop key while another window has focus.

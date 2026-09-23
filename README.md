@@ -121,6 +121,24 @@ window somewhere you cannot see it.
 Sequences are saved as JSON in `sequences/`. Captured reference images go in
 `images/`. Neither is committed.
 
+### Pictures you no longer need
+
+Delete a step and Pixie offers to delete its picture too, but only when
+nothing else uses it. A duplicated step shares one file with the original, and
+so can two different sequences, so the offer only appears when this really was
+the last step pointing at it.
+
+Recapturing a step writes a new file and leaves the old one behind, which is
+how `images/` fills up with near-identical pictures. To clear those out:
+
+```
+python tools/tidy_images.py            # list what nothing uses
+python tools/tidy_images.py --apply    # delete them
+```
+
+It lists and deletes nothing unless you ask. Save your work first: a step you
+have not saved yet is not in any file, so its picture looks unused.
+
 ### The steps
 
 | Step | What it does |
@@ -139,9 +157,27 @@ Sequences are saved as JSON in `sequences/`. Captured reference images go in
 | Section divider | Marks the start of a section |
 | Note | Does nothing. Somewhere to explain the sequence to yourself |
 
-Any step that waits can be told what to do when its target never turns up:
-start the sequence over, carry on regardless, move to the next section, or stop
-the run. Set its timeout to 0 and it waits indefinitely instead.
+### When something does not turn up
+
+Any step that waits has a `Give up after (s)` and an `If it is not found`.
+That pair is worth understanding, because between them they decide how long
+Pixie sits doing nothing:
+
+| If it is not found | What happens |
+| --- | --- |
+| Start the whole sequence again | Back to the very first step of the sequence, not the top of this section |
+| Carry on to the next step anyway | Runs the next step as though this one had worked |
+| Move on to the next section | Leaves this section. This is how a section ends |
+| Stop the run | Same as pressing Stop |
+
+`Give up after` is the timeout. It defaults to 30 seconds on a step that waits
+for something, so a section start point left at its default spends 30 seconds
+waiting before it hands over to the next section. If moving between screens
+feels slow, that is almost always why. Set it to 0 and it waits forever
+instead.
+
+The log tells you which is happening: `still waiting for main_menu.png, 15s so
+far (gives up in 15s)`.
 
 ## Matching a glow or a highlight
 
@@ -223,6 +259,19 @@ The pause between sections is separate from the pause between steps. Set it to
 0 in Settings and Pixie moves from one screen to the next without waiting,
 while still pausing between clicks. It applies both when a section hands over
 to the next one and when a section starts itself again.
+
+Select a divider and the section gets two settings of its own:
+
+* **Pause around this section**, which overrides the sequence-wide one for
+  this section only
+* **Cap every wait in here**, a ceiling on how long any step inside may wait.
+  A step asking for 30 seconds, or for forever, gives up after the cap
+  instead; a step that already waits less keeps its own shorter time
+
+The cap is the quick way to stop one screen idling without going through its
+steps one at a time. Set it to 3 and nothing in that section can sit still for
+longer than that. The log says so when the section starts:
+`=== Before Game === (nothing here waits longer than 3s)`.
 
 A sequence with no dividers is treated as one section covering everything, which
 behaves exactly as it did before sections existed.
@@ -329,6 +378,7 @@ pixie/
 │   ├── check_wiring.py    imports and step wiring, no screen needed
 │   ├── check_target.py    can we see and click your application?
 │   ├── tune_color.py      works out color settings for a glow
+│   ├── tidy_images.py     lists pictures no sequence uses any more
 │   └── make_icon.py       regenerates assets/pixie.ico
 ├── tests/
 ├── assets/

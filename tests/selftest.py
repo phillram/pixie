@@ -91,6 +91,8 @@ def main() -> int:
     failures.extend(_check_sections())
     failures.extend(_check_numbering())
     failures.extend(_check_section_pause())
+    failures.extend(_check_section_limits())
+    failures.extend(_check_declared_defaults())
     failures.extend(_check_click_box())
     failures.extend(_check_keyboard())
     failures.extend(_check_mouse())
@@ -265,6 +267,71 @@ def _check_section_pause() -> list[str]:
     print(f"Section pause   : waits {waits} on a two-section handover")
     if 0.7 not in waits:
         problems.append(f"no section pause was waited: {waits}")
+    return problems
+
+
+def _check_section_limits() -> list[str]:
+    """A section can cap how long the steps inside it wait."""
+    def divider(name, **extra):
+        return {"type": "section", "name": name, "enabled": True, **extra}
+
+    steps = [
+        divider("Capped", wait_limit=3, pause=[0, 0]),
+        {"type": "wait_for_image", "name": "thirty", "enabled": True,
+         "image": "x", "timeout": 30.0},
+        {"type": "wait_for_image", "name": "forever", "enabled": True,
+         "image": "x", "timeout": 0.0},
+        {"type": "click_image_if_present", "name": "quick", "enabled": True,
+         "image": "x", "timeout": 2.0},
+        divider("Uncapped"),
+        {"type": "wait_for_image", "name": "plain", "enabled": True,
+         "image": "x", "timeout": 30.0},
+    ]
+    runner = engine_mod.Engine(
+        engine_mod.Sequence(name="caps", steps=steps,
+                            settings=engine_mod.Settings(section_pause_min=5,
+                                                         section_pause_max=5)),
+        dry_run=True)
+
+    problems = []
+    capped, uncapped = runner.sections()
+
+    runner._enter_section(capped)
+    waits = {steps[i]["name"]: runner._timeout(steps[i], 30.0) for i in (1, 2, 3)}
+    print(f"Section cap     : {waits}")
+    if waits != {"thirty": 3.0, "forever": 3.0, "quick": 2.0}:
+        problems.append(f"the 3s cap produced {waits}")
+    if runner._section_pause(capped) != 0.0:
+        problems.append("a section's own pause did not override the default")
+
+    runner._enter_section(uncapped)
+    if runner._timeout(steps[5], 30.0) != 30.0:
+        problems.append("the cap leaked into the next section")
+    if runner._section_pause(uncapped) != 5.0:
+        problems.append("a section without its own pause ignored the default")
+
+    # A step that waits forever must still be able to wait forever when
+    # nothing caps it.
+    if runner._timeout({"type": "wait_for_image", "timeout": 0.0}, 30.0) != 0.0:
+        problems.append("'wait forever' stopped meaning forever")
+    return problems
+
+
+def _check_declared_defaults() -> list[str]:
+    """A step missing a key must behave the way the editor says it would."""
+    problems = []
+    bare = {"type": "wait_for_color_in_area", "color": [0, 255, 255]}
+    checks = {"match": "hue", "tolerance": 14, "min_pixels": 40,
+              "min_saturation": 90, "min_brightness": 70}
+    got = {key: engine_mod.Engine._value(bare, key, "WRONG") for key in checks}
+    print(f"Declared defaults: {got}")
+    for key, expected in checks.items():
+        if got[key] != expected:
+            problems.append(f"a missing {key!r} came out as {got[key]!r}, but the "
+                            f"editor shows {expected!r}")
+    # An explicit value still wins, including a falsy one.
+    if engine_mod.Engine._value({"type": "wait_for_image", "timeout": 0}, "timeout", 9) != 0:
+        problems.append("an explicit 0 was treated as unset")
     return problems
 
 

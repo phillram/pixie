@@ -15,15 +15,47 @@ from typing import Any, Callable
 # What to do when a step's timeout expires without the thing appearing.
 ON_TIMEOUT = ("restart", "continue", "next_section", "stop")
 ON_TIMEOUT_LABELS = {
-    "restart": "Start the sequence over",
-    "continue": "Carry on to the next step",
+    "restart": "Start the whole sequence again",
+    "continue": "Carry on to the next step anyway",
     "next_section": "Move on to the next section",
     "stop": "Stop the run",
 }
+# The longer version, shown beside the dropdown, because "start over" reads
+# like "start this section over" and it does not.
+ON_TIMEOUT_NOTES = {
+    "restart": "Back to the very first step of the sequence, not the top of "
+               "this section.",
+    "continue": "Pretend it was found and run the next step regardless. Only "
+                "safe when the next step does not depend on this one.",
+    "next_section": "Leave this section and start the next one. This is how a "
+                    "section ends: it repeats until its first step stops "
+                    "finding what it looks for.",
+    "stop": "Stop everything, as though you had pressed Stop.",
+}
 
 BUTTONS = ("left", "right", "middle")
+BUTTON_LABELS = {"left": "Left button", "right": "Right button",
+                 "middle": "Middle button"}
 COLOR_MODES = ("any", "mean")
+COLOR_MODE_LABELS = {"any": "any pixel in the square matches",
+                     "mean": "the square's average color matches"}
 COLOR_MATCH = ("hue", "rgb")
+COLOR_MATCH_LABELS = {"hue": "Hue - the shade, at any brightness",
+                      "rgb": "RGB - the exact color"}
+
+# Plain English for the values stored in each 'choice' field, looked up by the
+# field's key. The file still stores the short value; only the dropdown reads
+# differently.
+CHOICE_LABELS: dict[str, dict[str, str]] = {
+    "on_timeout": ON_TIMEOUT_LABELS,
+    "button": BUTTON_LABELS,
+    "mode": COLOR_MODE_LABELS,
+    "match": COLOR_MATCH_LABELS,
+}
+# What the chosen value actually means, shown under the dropdown.
+CHOICE_NOTES: dict[str, dict[str, str]] = {
+    "on_timeout": ON_TIMEOUT_NOTES,
+}
 
 _MATCH_HINT = (
     "'hue' matches the shade whatever its brightness - use it for anything that "
@@ -44,6 +76,27 @@ _SATURATION_HINT = (
 _BRIGHTNESS_HINT = (
     "Hue mode only. Ignores near-black pixels, whose hue is meaningless too."
 )
+_TIMEOUT_HINT = (
+    "How long to keep looking before giving up and doing whatever 'If not "
+    "found' says. This is the setting that decides how long Pixie sits still "
+    "when something does not turn up.\n"
+    "**0 means wait forever**: she idles here until it appears, however long "
+    "that takes. Use it when the next steps make no sense without it.\n"
+    "A section's start point is usually the one to shorten - 30s of waiting "
+    "before moving on to the next section is 30s of nothing happening."
+)
+_SECTION_PAUSE_HINT = (
+    "Replaces the sequence-wide pause between sections, for this section "
+    "only. Waited when this section starts again, and when it hands over to "
+    "the next one. Set both boxes to 0 for no wait at all."
+)
+_SECTION_LIMIT_HINT = (
+    "A ceiling on every wait inside this section. A step that would wait 30s, "
+    "or forever, gives up after this instead; a step that already waits less "
+    "keeps its own shorter time.\n"
+    "This is the quick way to stop a section idling: set it to 3 and nothing "
+    "in the section can sit still for longer than that."
+)
 
 
 
@@ -52,7 +105,9 @@ class Field:
     """One editable setting on a step."""
 
     key: str
-    kind: str  # image | point | color | region | number | integer | choice | text
+    # image | point | color | region | box | number | integer | choice |
+    # offset | key | pause | limit | multiline
+    kind: str
     label: str
     default: Any = None
     choices: tuple[str, ...] = ()
@@ -111,11 +166,11 @@ def _image_fields(timeout: float, on_timeout: str) -> tuple[Field, ...]:
               hint="The picture to look for on screen."),
         Field("region", "region", "Search area", None,
               hint="Limit the scan to part of the screen. Much faster."),
-        Field("confidence", "number", "Confidence", 0.85,
-              hint="0-1. Lower matches more loosely. 0.85 is a good start."),
-        Field("timeout", "number", "Wait up to (s)", timeout,
-              hint='How long to keep looking. **0 means wait forever** - Pixie idles here until it turns up, which is what you want when the next steps make no sense without it.'),
-        Field("on_timeout", "choice", "If not found", on_timeout, choices=ON_TIMEOUT),
+        Field("confidence", "number", "How close a match (0-1)", 0.85,
+              hint="1.00 is pixel perfect and too strict for most things. Lower matches more loosely, at the risk of matching the wrong thing. 0.85 is a good start."),
+        Field("timeout", "number", "Give up after (s)", timeout,
+              hint=_TIMEOUT_HINT),
+        Field("on_timeout", "choice", "If it is not found, then", on_timeout, choices=ON_TIMEOUT),
     )
 
 
@@ -127,8 +182,11 @@ _OFFSET_HINT = (
 )
 
 _CLICK_FIELDS: tuple[Field, ...] = (
-    Field("clicks", "integer", "Clicks", 1, hint="2 for a double-click."),
-    Field("button", "choice", "Button", "left", choices=BUTTONS),
+    Field("clicks", "integer", "How many clicks", 1,
+          hint="2 for a double-click: two clicks 60ms apart, which is well "
+               "inside Windows' double-click time, so the application reads "
+               "them as one double-click."),
+    Field("button", "choice", "Which mouse button", "left", choices=BUTTONS),
     Field("offset", "offset", "Click offset", [0, 0], hint=_OFFSET_HINT),
 )
 
@@ -145,8 +203,14 @@ STEP_TYPES: dict[str, StepType] = {
               "straight back to the section's first step. To leave, give one step "
               "- usually the first - 'If not found: Move on to the next section'. "
               "After the last section, Pixie goes back to the first one.\n\n"
-              "Use the Name box above as the section's title.",
-        fields=(),
+              "Use the Name box above as the section's title. The two settings "
+              "below apply to every step in this section.",
+        fields=(
+            Field("pause", "pause", "Pause around this section", None,
+                  hint=_SECTION_PAUSE_HINT),
+            Field("wait_limit", "limit", "Cap every wait in here at (s)", None,
+                  hint=_SECTION_LIMIT_HINT),
+        ),
         describe=lambda s: f"=== {s.get('name') or 'Untitled section'} ===",
     ),
     "note": StepType(
@@ -166,14 +230,14 @@ STEP_TYPES: dict[str, StepType] = {
         fields=(
             Field("pos", "point", "Where", None, required=True, hint="The pixel to watch."),
             Field("color", "color", "Color", [255, 255, 255]),
-            Field("tolerance", "number", "Tolerance", 30,
+            Field("tolerance", "number", "How far off it may be", 30,
                   hint="How far off the color may be. 10 is strict, 60 is loose."),
-            Field("radius", "integer", "Radius", 3, minimum=0, maximum=200,
+            Field("radius", "integer", "Look this far around it (px)", 3, minimum=0, maximum=200,
                   hint="Checks a square this many pixels out, to absorb drift."),
-            Field("mode", "choice", "Match", "any", choices=COLOR_MODES,
-                  hint="'any' pixel in the square, or the square's 'mean'."),
-            Field("timeout", "number", "Wait up to (s)", 30.0, hint='How long to keep looking. **0 means wait forever** - Pixie idles here until it turns up, which is what you want when the next steps make no sense without it.'),
-            Field("on_timeout", "choice", "If it never appears", "restart", choices=ON_TIMEOUT),
+            Field("mode", "choice", "Counts as a match when", "any", choices=COLOR_MODES,
+                  hint="Averaging is steadier on a speckled or anti-aliased target; any-pixel reacts to the smallest trace of the color."),
+            Field("timeout", "number", "Give up after (s)", 30.0, hint=_TIMEOUT_HINT),
+            Field("on_timeout", "choice", "If it never appears, then", "restart", choices=ON_TIMEOUT),
         ),
         describe=lambda s: f"Wait for color at {_point(s)}",
     ),
@@ -190,18 +254,18 @@ STEP_TYPES: dict[str, StepType] = {
                   hint="The part of the screen the glow can appear in."),
             Field("color", "color", "Color", [255, 215, 0],
                   hint="Pick a mid-bright part of the glow, not the white-hot core."),
-            Field("match", "choice", "Match by", "hue", choices=COLOR_MATCH,
+            Field("match", "choice", "Match the color by", "hue", choices=COLOR_MATCH,
                   hint=_MATCH_HINT),
-            Field("tolerance", "number", "Tolerance", 14, hint=_TOLERANCE_HINT),
+            Field("tolerance", "number", "How far off it may be", 14, hint=_TOLERANCE_HINT),
             Field("min_saturation", "integer", "Min saturation", 90,
                   minimum=0, maximum=255, hint=_SATURATION_HINT),
             Field("min_brightness", "integer", "Min brightness", 70,
                   minimum=0, maximum=255, hint=_BRIGHTNESS_HINT),
-            Field("min_pixels", "integer", "Smallest blob", 40, minimum=1, maximum=100000,
+            Field("min_pixels", "integer", "Smallest patch (pixels)", 40, minimum=1, maximum=100000,
                   hint="Ignore patches smaller than this many pixels, so stray "
                        "matching pixels elsewhere don't count."),
-            Field("timeout", "number", "Wait up to (s)", 30.0, hint='How long to keep looking. **0 means wait forever** - Pixie idles here until it turns up, which is what you want when the next steps make no sense without it.'),
-            Field("on_timeout", "choice", "If it never appears", "restart",
+            Field("timeout", "number", "Give up after (s)", 30.0, hint=_TIMEOUT_HINT),
+            Field("on_timeout", "choice", "If it never appears, then", "restart",
                   choices=ON_TIMEOUT),
         ),
         describe=lambda s: ("Find color in "
@@ -217,16 +281,17 @@ STEP_TYPES: dict[str, StepType] = {
         fields=(
             Field("region", "region", "Area to search", None, required=True),
             Field("color", "color", "Color", [255, 215, 0]),
-            Field("match", "choice", "Match by", "hue", choices=COLOR_MATCH,
+            Field("match", "choice", "Match the color by", "hue", choices=COLOR_MATCH,
                   hint=_MATCH_HINT),
-            Field("tolerance", "number", "Tolerance", 14, hint=_TOLERANCE_HINT),
+            Field("tolerance", "number", "How far off it may be", 14, hint=_TOLERANCE_HINT),
             Field("min_saturation", "integer", "Min saturation", 90,
                   minimum=0, maximum=255, hint=_SATURATION_HINT),
             Field("min_brightness", "integer", "Min brightness", 70,
                   minimum=0, maximum=255, hint=_BRIGHTNESS_HINT),
-            Field("min_pixels", "integer", "Smallest blob", 40,
-                  minimum=1, maximum=100000),
-            Field("timeout", "number", "Look for (s)", 2.0,
+            Field("min_pixels", "integer", "Smallest patch (pixels)", 40,
+                  minimum=1, maximum=100000,
+                  hint="Ignore patches smaller than this, so a few stray matching pixels elsewhere don't count as a find."),
+            Field("timeout", "number", "Give it this long (s)", 2.0,
                   hint="How long to give it before deciding it isn't there."),
         ) + _CLICK_FIELDS,
         describe=lambda s: (f"If color appears, {_clicks_word(s).lower()} it"),
@@ -253,8 +318,9 @@ STEP_TYPES: dict[str, StepType] = {
             Field("image", "image", "Image", "", required=True,
                   hint="The picture that may or may not appear."),
             Field("region", "region", "Search area", None),
-            Field("confidence", "number", "Confidence", 0.85),
-            Field("timeout", "number", "Look for (s)", 3.0,
+            Field("confidence", "number", "How close a match (0-1)", 0.85,
+                  hint="Lower matches more loosely. 0.85 is a good start."),
+            Field("timeout", "number", "Give it this long (s)", 3.0,
                   hint="How long to give it before deciding it is not there."),
         ) + _CLICK_FIELDS,
         describe=lambda s: f"If {_stem(s.get('image'))} appears, {_clicks_word(s).lower()} it",
@@ -296,7 +362,7 @@ STEP_TYPES: dict[str, StepType] = {
               "focus receives it, so make sure a click step put focus there first.",
         fields=(
             Field("key", "key", "Key", "Enter", required=True),
-            Field("presses", "integer", "Times", 1, minimum=1, maximum=50,
+            Field("presses", "integer", "How many taps", 1, minimum=1, maximum=50,
                   hint="How many separate taps. 2 = press it twice."),
             Field("interval", "number", "Gap between taps (s)", 0.08,
                   hint="Raise this if the application misses the second press."),
@@ -310,8 +376,8 @@ STEP_TYPES: dict[str, StepType] = {
         label="Wait a moment",
         blurb="Pause for a fixed time, to let the application catch up.",
         fields=(
-            Field("seconds", "number", "At least (s)", 1.0),
-            Field("seconds_max", "number", "At most (s)", 1.0,
+            Field("seconds", "number", "Wait at least (s)", 1.0),
+            Field("seconds_max", "number", "and at most (s)", 1.0,
                   hint="Set this higher than 'At least' and the pause varies "
                        "randomly between the two."),
         ),

@@ -556,6 +556,125 @@ def check_duplicate_step():
     return problems
 
 
+def check_choices_read_as_english():
+    """Dropdowns show plain English but still store the short value."""
+    from tkinter import ttk
+
+    problems = []
+    step = step_defs.new_step("wait_for_image")
+    app.sequence = engine_mod.Sequence(name="choices", steps=[step])
+    app.refresh_list(keep=0)
+    app.selected = 0
+    app.build_editor()
+    root.update()
+
+    var = app.field_vars["on_timeout"]
+    if var.get() != step_defs.ON_TIMEOUT_LABELS["restart"]:
+        problems.append(f"the dropdown shows {var.get()!r}, not the plain "
+                        "English label")
+    combo = next((w for w in _descendants(app.editor)
+                  if isinstance(w, ttk.Combobox)
+                  and str(w.cget("textvariable")) == str(var)), None)
+    if combo is None:
+        problems.append("could not find the on_timeout dropdown")
+        return problems
+    if "next_section" in combo.cget("values"):
+        problems.append(f"raw values still on show: {combo.cget('values')}")
+
+    # Picking one stores the short value, which is what the engine reads.
+    var.set(step_defs.ON_TIMEOUT_LABELS["next_section"])
+    root.update()
+    if step["on_timeout"] != "next_section":
+        problems.append(f"choosing a label stored {step['on_timeout']!r}")
+
+    # The note underneath has to follow the choice, because that is the part
+    # that says "the whole sequence" rather than "this section".
+    notes = [_text_of(w) for w in _descendants(app.editor)]
+    if not any(step_defs.ON_TIMEOUT_NOTES["next_section"][:30] in n for n in notes):
+        problems.append("the note under the dropdown did not follow the choice")
+
+    # And a reload must survive the round trip.
+    if engine_mod.Sequence(name="x", steps=[step]).steps[0]["on_timeout"] != "next_section":
+        problems.append("the stored value changed on reload")
+
+    print("Choices ok: dropdowns read as English, files keep the short value")
+    return problems
+
+
+def check_deleting_a_step_offers_to_delete_its_image():
+    """An orphaned picture is offered up; a shared one is left alone."""
+    import cv2
+    import numpy as np
+    from tkinter import messagebox
+
+    from pixie.paths import IMAGES_DIR, APP_DIR, SEQUENCES_DIR
+
+    problems = []
+    IMAGES_DIR.mkdir(parents=True, exist_ok=True)
+    lonely = IMAGES_DIR / "_orphan_probe.png"
+    shared = IMAGES_DIR / "_shared_probe.png"
+    for path in (lonely, shared):
+        cv2.imwrite(str(path), np.random.randint(0, 255, (20, 20, 3), dtype=np.uint8))
+
+    asked = []
+    original_ask = gui.messagebox.askyesno
+    gui.messagebox.askyesno = lambda *a, **k: (asked.append(a[1]), True)[1]
+
+    other_sequence = SEQUENCES_DIR / "_probe_other.json"
+    try:
+        lonely_rel = lonely.relative_to(APP_DIR).as_posix()
+        shared_rel = shared.relative_to(APP_DIR).as_posix()
+
+        # Another saved sequence uses the shared one.
+        other = engine_mod.Sequence(name="other", steps=[
+            dict(step_defs.new_step("click_image"), image=shared_rel)])
+        other.save(other_sequence)
+
+        one = dict(step_defs.new_step("click_image"), image=lonely_rel)
+        two = dict(step_defs.new_step("click_image"), image=shared_rel)
+        twin = dict(step_defs.new_step("click_image"), image=lonely_rel)
+        app.sequence = engine_mod.Sequence(name="deleting", steps=[one, two, twin])
+        app.refresh_list(keep=0)
+        root.update()
+
+        # 1. a copy of the step still needs the file, so nothing is offered.
+        app.selected = 0
+        app.remove()
+        root.update()
+        if asked:
+            problems.append("offered to delete a picture another step still uses")
+        if not lonely.exists():
+            problems.append("deleted a picture another step still uses")
+
+        # 2. now it is the last user of it, so we are asked, and it goes.
+        app.selected = 1              # the twin, after the first removal
+        app.remove()
+        root.update()
+        if len(asked) != 1:
+            problems.append(f"was asked {len(asked)} times about an orphan, "
+                            "expected once")
+        if lonely.exists():
+            problems.append("said yes, but the picture is still there")
+
+        # 3. the shared one belongs to another sequence: never offered.
+        asked.clear()
+        app.selected = 0
+        app.remove()
+        root.update()
+        if asked:
+            problems.append("offered to delete a picture another sequence uses")
+        if not shared.exists():
+            problems.append("deleted a picture another sequence uses")
+
+        print("Deleting ok: orphaned pictures offered up, shared ones left alone")
+    finally:
+        gui.messagebox.askyesno = original_ask
+        other_sequence.unlink(missing_ok=True)
+        lonely.unlink(missing_ok=True)
+        shared.unlink(missing_ok=True)
+    return problems
+
+
 def check_image_and_color_previews():
     """An image step shows the picture; a color step shows the color."""
     import cv2
@@ -744,6 +863,16 @@ try:
     failures.extend(check_duplicate_step())
 except Exception as error:  # noqa: BLE001
     failures.append(f"duplicate check: {error!r}")
+
+try:
+    failures.extend(check_choices_read_as_english())
+except Exception as error:  # noqa: BLE001
+    failures.append(f"choice label check: {error!r}")
+
+try:
+    failures.extend(check_deleting_a_step_offers_to_delete_its_image())
+except Exception as error:  # noqa: BLE001
+    failures.append(f"image cleanup check: {error!r}")
 
 try:
     failures.extend(check_image_and_color_previews())
