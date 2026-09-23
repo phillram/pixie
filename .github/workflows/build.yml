@@ -1,0 +1,58 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build Pixie.exe
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Check the package holds together
+        run: python tools/check_wiring.py
+
+      # The full self-tests capture the real screen and send real input, so
+      # they need a desktop session and are run locally rather than here.
+      # Building the exe is the check that matters on CI: it exercises every
+      # import and catches a broken module layout.
+      - name: Build the executable
+        run: python tools/build_exe.py
+
+      - name: Upload the build
+        uses: actions/upload-artifact@v4
+        with:
+          name: Pixie-exe
+          path: Pixie.exe
+          retention-days: 30
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          gh release create "${{ github.ref_name }}"
+          Pixie.exe
+          --title "Pixie ${{ github.ref_name }}"
+          --generate-notes

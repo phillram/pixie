@@ -17,7 +17,7 @@ import sys
 import time
 from pathlib import Path
 
-APP_DIR = Path(__file__).resolve().parent
+APP_DIR = Path(__file__).resolve().parent.parent  # tools/ -> project root
 EXE_PATH = APP_DIR / "Pixie.exe"
 BUILD_DIR = APP_DIR / "build"
 SPEC_PATH = APP_DIR / "Pixie.spec"
@@ -48,8 +48,8 @@ def main() -> int:
         print(f"    {sys.executable} -m pip install pyinstaller")
         return 1
 
-    if not (APP_DIR / "pixie.ico").exists():
-        print("pixie.ico is missing - run `python make_icon.py` first.")
+    if not (APP_DIR / "assets" / "pixie.ico").exists():
+        print("assets/pixie.ico is missing - run `python tools/make_icon.py` first.")
         return 1
 
     if _is_running():
@@ -61,15 +61,15 @@ def main() -> int:
         sys.executable, "-m", "PyInstaller",
         "--noconfirm", "--onefile", "--windowed",
         "--name", "Pixie",
-        "--icon", "pixie.ico",
-        "--add-data", "pixie.ico;.",
+        "--icon", "assets/pixie.ico",
+        "--add-data", "assets/pixie.ico;.",
         "--distpath", str(APP_DIR),      # straight into the project folder
         "--workpath", str(BUILD_DIR),
         "--specpath", str(APP_DIR),
     ]
     for module in EXCLUDES:
         command += ["--exclude-module", module]
-    command.append("gui.py")
+    command.append(str(APP_DIR / "pixie" / "__main__.py"))
 
     print(f"Building {EXE_PATH.name}. This takes a minute.\n")
     started = time.time()

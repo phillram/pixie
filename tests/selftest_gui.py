@@ -12,9 +12,11 @@ import tempfile
 import tkinter as tk
 from pathlib import Path
 
-import engine as engine_mod
-import gui
-import steps as step_defs
+import _bootstrap  # noqa: F401  (sys.path)
+
+from pixie.core import engine as engine_mod
+from pixie.ui import app as gui
+from pixie.core import steps as step_defs
 
 failures = []
 

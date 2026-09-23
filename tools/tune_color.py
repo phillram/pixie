@@ -18,8 +18,10 @@ from collections import Counter
 import cv2
 import numpy as np
 
-import capture
-import screen
+import _bootstrap  # noqa: F401  (sys.path)
+
+from pixie.ui import capture
+from pixie.system import screen
 
 # Hue is stored 0-179 by OpenCV; these are the human names for each arc.
 HUE_NAMES = (

@@ -10,7 +10,7 @@ sequences/*.json
 .pixie_state.json
 target_check.png
 
-# Build artifacts - rebuild with `python build_exe.py`
+# Build artifacts - rebuild with `python tools/build_exe.py`
 Pixie.exe
 build/
 dist/

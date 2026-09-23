@@ -22,9 +22,11 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-import screen
+import _bootstrap  # noqa: F401  (sys.path)
 
-from paths import APP_DIR as PROJECT_DIR
+from pixie.system import screen
+
+from pixie.paths import APP_DIR as PROJECT_DIR
 COUNTDOWN = 6
 SHOT_PATH = PROJECT_DIR / "target_check.png"
 

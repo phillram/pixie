@@ -16,12 +16,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
-import keyboard
-import mouse
-import screen
-import steps as step_defs
+from pixie.system import keyboard
+from pixie.system import mouse
+from pixie.system import screen
+from pixie.core import steps as step_defs
 
-from paths import APP_DIR as PROJECT_DIR
+from pixie.paths import APP_DIR as PROJECT_DIR
 FAILSAFE_CORNER = 5  # mouse within this many pixels of the top-left aborts
 GUARD_INTERVAL = 0.05
 IDLE_NOTICE_SECONDS = 15.0  # how often to say 'still waiting' while idling

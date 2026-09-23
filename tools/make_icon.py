@@ -11,7 +11,9 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw
 
-import theme
+import _bootstrap  # noqa: F401  (sys.path)
+
+from pixie.ui import theme
 
 OUT = Path(__file__).resolve().parent / "pixie.ico"
 SIZES = (256, 128, 64, 48, 32, 16)

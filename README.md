@@ -37,18 +37,25 @@ for the capture overlay.
 
 ## Running it
 
+Download `Pixie.exe` from the
+[latest release](https://github.com/phillram/pixie/releases/latest) and double
+click it. It needs no Python and nothing installed. Put it in a folder of its
+own, because it creates `sequences/` and `images/` beside itself.
+
+To run from source instead:
+
 ```
-python gui.py
+python -m pixie
 ```
 
-Or build a standalone executable that needs no Python installed:
+To build the executable yourself:
 
 ```
-python build_exe.py
+python tools/build_exe.py
 ```
 
-That produces `Pixie.exe` in the project folder, about 70MB, and takes roughly
-twenty seconds. Rerun it after any code change.
+That produces `Pixie.exe` in the project root, about 70MB, in roughly twenty
+seconds.
 
 ## How a sequence works
 
@@ -110,7 +117,7 @@ Same color, five times the coverage, and far steadier frame to frame.
 To get the numbers for your own target:
 
 ```
-python tune_color.py
+python tools/tune_color.py
 ```
 
 Drag a box over the thing you want detected. It reports the dominant hue and
@@ -185,9 +192,9 @@ how you confirm the coordinates are right before anything real happens.
 For an unattended run, from a shortcut or a scheduled task:
 
 ```
-python automator.py sequences/my_job.json
-python automator.py sequences/my_job.json --dry-run
-python automator.py sequences/my_job.json --max-cycles 20
+python -m pixie sequences/my_job.json
+python -m pixie sequences/my_job.json --dry-run
+python -m pixie sequences/my_job.json --max-cycles 20
 ```
 
 ## Is this the right tool?
@@ -202,19 +209,23 @@ accessibility tree, and none of the above bothers them.
 
 Pixel matching is the right choice when there is no accessibility tree to read,
 which covers anything that draws its own interface: games, Unity and SDL
-applications, custom renderers. `check_target.py` prints the window class of
+applications, custom renderers. `tools/check_target.py` prints the window class of
 whatever is in the foreground, which tells you which case you are in.
 
 Some fullscreen applications use exclusive fullscreen, which screen capture
-reads as a black frame. `check_target.py` detects that too. The fix is usually a
+reads as a black frame. `tools/check_target.py` detects that too. The fix is usually a
 setting in the application: switch it to borderless windowed.
 
 ## Development
 
 ```
-python selftest.py       # detection, color matching, sections, real input
-python selftest_gui.py   # builds every step editor, reorders, saves and reloads
+python tools/check_wiring.py   # imports and step wiring, no screen needed
+python tests/selftest.py       # detection, color matching, sections, real input
+python tests/selftest_gui.py   # every step editor, reordering, save and reload
 ```
+
+`check_wiring.py` is what CI runs, because it needs no desktop. The other two
+do: they capture the real screen and send real input.
 
 `selftest.py` crops a patch of your actual screen and matches it back, checks
 hue matching beats RGB on a synthetic gradient, runs a three section sequence to
@@ -225,21 +236,37 @@ cannot take focus.
 
 ### Layout
 
-| File | Purpose |
-| --- | --- |
-| `gui.py` | The application: sequence builder, runner, log |
-| `engine.py` | Runs a sequence. Knows nothing about the GUI |
-| `steps.py` | The step vocabulary. Each type declares its fields as data |
-| `screen.py` | Capture, template matching, color searching |
-| `mouse.py`, `keyboard.py` | Input via SendInput |
-| `capture.py` | The freeze-screen picker |
-| `theme.py` | Dark ttk theme and tooltips |
-| `paths.py` | File locations, source and frozen exe alike |
-| `automator.py` | Headless runner |
-| `check_target.py` | Can we see and click your application? |
-| `tune_color.py` | Works out color settings for a glow |
-| `build_exe.py` | Builds Pixie.exe |
+```
+pixie/
+├── pixie/                 the package
+│   ├── __main__.py        entry point: GUI with no arguments, headless with
+│   ├── cli.py             the headless runner
+│   ├── paths.py           where files live, from source or from a frozen exe
+│   ├── core/              the engine. No GUI, no Windows calls
+│   │   ├── engine.py      runs a sequence
+│   │   └── steps.py       the step vocabulary, declared as data
+│   ├── system/            talking to Windows
+│   │   ├── screen.py      capture, template matching, color searching
+│   │   ├── mouse.py       movement and clicks via SendInput
+│   │   └── keyboard.py    key presses via SendInput
+│   └── ui/                the tkinter application
+│       ├── app.py         main window
+│       ├── theme.py       dark theme and tooltips
+│       └── capture.py     the freeze-screen picker
+├── tools/                 standalone helpers, not imported by the app
+│   ├── build_exe.py       builds Pixie.exe
+│   ├── check_wiring.py    imports and step wiring, no screen needed
+│   ├── check_target.py    can we see and click your application?
+│   ├── tune_color.py      works out color settings for a glow
+│   └── make_icon.py       regenerates assets/pixie.ico
+├── tests/
+├── assets/
+└── sequences/
+```
 
-Adding a step type means one entry in `STEP_TYPES` in `steps.py` and one
-`_do_<key>` method on `Engine`. The GUI builds its editor from the field
-declarations, so it needs no changes. `selftest.py` checks the two stay in sync.
+Nothing in `core` or `system` imports from `ui`, so the engine runs headless.
+
+Adding a step type means one entry in `STEP_TYPES` in `pixie/core/steps.py` and
+one `_do_<key>` method on `Engine`. The GUI builds its editor from the field
+declarations, so it needs no changes. `tools/check_wiring.py` fails if the two
+ever drift apart.

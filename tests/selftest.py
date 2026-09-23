@@ -18,9 +18,11 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-import engine as engine_mod
-import screen
-import steps as step_defs
+import _bootstrap  # noqa: F401  (sys.path)
+
+from pixie.core import engine as engine_mod
+from pixie.system import screen
+from pixie.core import steps as step_defs
 
 PROJECT_DIR = Path(__file__).resolve().parent
 CROP = (300, 300, 120, 60)  # x, y, w, h -- an arbitrary but non-flat patch
@@ -183,7 +185,7 @@ def _check_hue_matching() -> list[str]:
     at its edge -- which is what a real glow looks like -- and checks hue mode
     catches far more of it than a distance match on one sampled color.
     """
-    import screen as screen_mod
+    from pixie.system import screen as screen_mod
 
     height, width = 200, 300
     frame = np.zeros((height, width, 3), dtype=np.uint8)
@@ -229,7 +231,7 @@ def _check_keyboard() -> list[str]:
     import ctypes
     import tkinter as tk
 
-    import keyboard as kb
+    from pixie.system import keyboard as kb
 
     received: list[str] = []
     root = tk.Tk()
@@ -272,7 +274,7 @@ def _check_mouse() -> list[str]:
     import ctypes
     import tkinter as tk
 
-    import mouse as ms
+    from pixie.system import mouse as ms
 
     events: list[str] = []
     root = tk.Tk()
@@ -336,7 +338,7 @@ def _check_color_search() -> list[str]:
     Uses the real find_color code path against synthetic frames rather than
     the live screen, so the result doesn't depend on what is on the desktop.
     """
-    import screen as screen_mod
+    from pixie.system import screen as screen_mod
 
     glow = (255, 215, 0)
     outline = (120, 60, 200, 140)  # left, top, width, height within the frame

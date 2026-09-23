@@ -22,9 +22,9 @@ from pathlib import Path
 import cv2
 from PIL import Image, ImageTk
 
-import screen
+from pixie.system import screen
 
-from paths import APP_DIR as PROJECT_DIR, IMAGES_DIR
+from pixie.paths import APP_DIR as PROJECT_DIR, IMAGES_DIR
 
 INSTRUCTIONS = {
     "region": "Drag a box around the thing to detect.  Esc cancels.",

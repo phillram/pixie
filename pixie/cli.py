@@ -16,10 +16,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-import engine as engine_mod
-import screen
+from pixie.core import engine as engine_mod
+from pixie.system import screen
 
-from paths import APP_DIR as PROJECT_DIR
+from pixie.paths import APP_DIR as PROJECT_DIR
 
 
 def make_printer(quiet: bool):

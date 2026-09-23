@@ -20,14 +20,14 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 from typing import Any
 
-import capture
-import engine as engine_mod
-import keyboard
-import screen
-import steps as step_defs
-import theme
+from pixie.ui import capture
+from pixie.core import engine as engine_mod
+from pixie.system import keyboard
+from pixie.system import screen
+from pixie.core import steps as step_defs
+from pixie.ui import theme
 
-from paths import (APP_DIR as PROJECT_DIR, APP_NAME, ICON_PATH, IMAGES_DIR,
+from pixie.paths import (APP_DIR as PROJECT_DIR, APP_NAME, ICON_PATH, IMAGES_DIR,
                    SEQUENCES_DIR, STATE_PATH, ensure_dirs)
 
 LOG_COLORS = {"info": theme.FG, "warn": theme.WARN, "error": theme.ERROR,
