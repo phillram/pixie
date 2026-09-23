@@ -218,6 +218,9 @@ def _hue_mask(patch: np.ndarray, target_rgb: tuple[int, int, int],
 # one to report. The engine and the GUI both take their list from here.
 PICK_ORDERS = ("largest", "leftmost", "rightmost", "topmost", "bottommost")
 
+# How close to the edge of the screen counts as being at it.
+EDGE_SLACK = 4
+
 
 def _sort_key(order: str):
     """How to rank candidate blobs, given as (left, top, width, height, area)."""
@@ -330,14 +333,19 @@ def _search(
         # Only count an edge as a crop if moving the search area could
         # actually help. An area that already reaches the edge of the screen
         # cannot be widened, so saying "widen the area" there is noise.
+        # A few pixels of slack: an area dragged to "the bottom of the
+        # screen" lands a pixel or two short of it, and warning that such an
+        # area could be widened is a lie you cannot act on.
         touching = []
-        if blob_left <= 0 and region[0] > desktop_left:
+        if blob_left <= 0 and region[0] > desktop_left + EDGE_SLACK:
             touching.append("left")
-        if blob_top <= 0 and region[1] > desktop_top:
+        if blob_top <= 0 and region[1] > desktop_top + EDGE_SLACK:
             touching.append("top")
-        if blob_left + width >= region[2] and region[0] + region[2] < desktop_right:
+        if (blob_left + width >= region[2]
+                and region[0] + region[2] < desktop_right - EDGE_SLACK):
             touching.append("right")
-        if blob_top + height >= region[3] and region[1] + region[3] < desktop_bottom:
+        if (blob_top + height >= region[3]
+                and region[1] + region[3] < desktop_bottom - EDGE_SLACK):
             touching.append("bottom")
         hit = ColorHit(left + width // 2, top + height // 2,
                        left, top, width, height, area, " and ".join(touching))
