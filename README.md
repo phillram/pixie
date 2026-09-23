@@ -289,6 +289,57 @@ wants an offset of `0, 0`: the middle of the outline is already the middle of
 the card. An offset was only ever needed to compensate for landing on a
 fragment.
 
+## When the background is the same color
+
+Hue matching finds a *shade*, and plenty of backgrounds are the same shade as
+the thing you want. A blue spaceship interior behind a blue card highlight is
+the hard case: same hue, and the pale parts of it pass the default saturation
+floor.
+
+It gets worse with joining switched on, because joining will happily glue a
+background streak onto your target and report the middle of the pair. On a
+test where a washed-out streak crosses a card outline:
+
+| Saturation floor | Patch found | Middle |
+| --- | --- | --- |
+| 90 (default) | 1000x290, streak and outline as one | 80px off the card |
+| 180 | 360x290, the outline alone | exactly right |
+
+**Saturation is what separates them.** A highlight is vivid; a background of
+the same hue is usually washed out towards white or grey. `Min saturation`
+throws away the washed-out pixels before anything else happens.
+
+### Finding the number
+
+Guessing at it is miserable, so press **What matches?** next to Test this
+step. Pixie hides, photographs the search area, and shows it back to you with
+every matching pixel tinted magenta, each patch boxed, and the ones it would
+reject greyed out. Each patch is listed with how saturated it actually is:
+
+```
+Would be used, in order (leftmost):
+  1. 1000x290 at 100, 10   59913 pixels   middle 600, 155   saturation 120-250
+```
+
+A range that wide is the tell: 120 is the background, 250 is the highlight.
+Set `Min saturation` between them - 180 here - and look again. Now it reads:
+
+```
+  1. 360x290 at 500, 10   26468 pixels   middle 680, 155   saturation 250-250
+```
+
+One patch, the outline alone, centred on the card.
+
+Work in this order, because each step depends on the one before:
+
+1. **Min saturation** until only the thing you want is tinted
+2. **Join pieces within** to pull that thing's fragments together
+3. **Patch at least this wide / tall** to drop any streaks that survive
+4. **If several match** to choose between the real candidates
+
+Joining a dirty mask glues the mess together, which is why saturation comes
+first.
+
 ## Several things glowing at once
 
 A row of cards can all be highlighted at the same time. `If several match,

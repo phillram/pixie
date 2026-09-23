@@ -96,6 +96,7 @@ def main() -> int:
     failures.extend(_check_section_limits())
     failures.extend(_check_pick_order())
     failures.extend(_check_broken_outlines_join_up())
+    failures.extend(_check_background_of_the_same_color())
     failures.extend(_check_every_wait_respects_the_cap())
     failures.extend(_check_declared_defaults())
     failures.extend(_check_click_box())
@@ -547,6 +548,72 @@ def _check_broken_outlines_join_up() -> list[str]:
     # Joining must not glue two separate cards together.
     if joined[0].left > 300 or joined[1].left < 600:
         problems.append("joining merged the two cards into one patch")
+    return problems
+
+
+def _check_background_of_the_same_color() -> list[str]:
+    """A washed-out background of the target hue must be separable from it.
+
+    The nastiest version of this: the background is the same hue, passes the
+    default saturation floor, and joining then glues it onto the real target
+    so the middle of the patch is nowhere near the middle of the thing.
+    Saturation is what tells them apart, and 'What matches?' is what tells
+    you the number to use.
+    """
+    from pixie.system import screen as screen_mod
+
+    def hsv(h, s, v):
+        return tuple(int(c) for c in cv2.cvtColor(
+            np.array([[[h, s, v]]], dtype=np.uint8), cv2.COLOR_HSV2BGR)[0, 0])
+
+    frame = np.zeros((308, 1200, 3), dtype=np.uint8)
+    frame[:, :] = hsv(110, 80, 60)                 # dark panels
+    frame[40:70, 100:1100] = hsv(90, 120, 230)     # pale cyan background streak
+    for y0, y1, x0, x1 in ((10, 30, 500, 860), (280, 300, 500, 860),
+                           (10, 300, 500, 520), (10, 300, 840, 860)):
+        frame[y0:y1, x0:x1] = hsv(90, 250, 250)    # the vivid card outline
+    target_middle = (680, 155)
+
+    original = screen_mod.grab
+    screen_mod.grab = lambda _region=None: frame
+    try:
+        common = dict(region=(0, 0, 1200, 308), target_rgb=(37, 254, 254),
+                      tolerance=14, min_pixels=39, match="hue",
+                      order="leftmost", join=25)
+        polluted = screen_mod.find_colors(min_saturation=90, **common)
+        clean = screen_mod.find_colors(min_saturation=180, **common)
+        _picture, kept, _dropped = screen_mod.explain_colors(
+            min_saturation=90, **common)
+    finally:
+        screen_mod.grab = original
+
+    problems = []
+    print(f"Same-hue background: default keeps {polluted[0].width}x"
+          f"{polluted[0].height}, saturation floor 180 keeps "
+          f"{clean[0].width}x{clean[0].height}")
+
+    if polluted[0].center == target_middle:
+        problems.append("the background did not contaminate the match, so this "
+                        "test proves nothing")
+    if clean[0].center != target_middle:
+        problems.append(f"raising the saturation floor gave {clean[0].center}, "
+                        f"expected the middle of the outline at {target_middle}")
+    if len(clean) != 1:
+        problems.append(f"a clean search found {len(clean)} patches, expected 1")
+
+    # The viewer has to report the saturation range, because that range is
+    # what tells you where to put the threshold.
+    note = kept[0][1] if kept else ""
+    if "saturation" not in note:
+        problems.append(f"'What matches?' did not report saturation: {note!r}")
+    else:
+        low, high = (int(n) for n in note.split()[-1].split("-"))
+        if not (low <= 130 and high >= 240):
+            problems.append(f"the reported range {low}-{high} does not show "
+                            "both the background and the target")
+        else:
+            print(f"                     reported {note}, so the threshold "
+                  f"belongs between {low} and {high}")
     return problems
 
 

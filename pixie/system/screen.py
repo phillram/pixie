@@ -226,7 +226,7 @@ def _sort_key(order: str):
     }.get(order, lambda b: (-b[4], b[0], b[1]))
 
 
-def find_colors(
+def _search(
     region: Region,
     target_rgb: tuple[int, int, int],
     tolerance: float = 40.0,
@@ -236,8 +236,14 @@ def find_colors(
     min_brightness: int = 70,
     order: str = "largest",
     join: int = 0,
-) -> list[ColorHit]:
-    """Every patch of `target_rgb` inside `region`, in the order asked for.
+    min_width: int = 0,
+    min_height: int = 0,
+) -> tuple[list[ColorHit], list[tuple[ColorHit, str]], np.ndarray]:
+    """Everything the search knows: what passed, what did not and why, and the mask.
+
+    `find_colors` is the usual way in. This exists as well so the GUI can show
+    you what Pixie is actually matching, which is the only way to tell a
+    highlight from a background that happens to be the same color.
 
     Built for things like a glowing highlight around an item: the glow keeps
     its color even when whatever it surrounds changes, so we look for the
@@ -268,7 +274,7 @@ def find_colors(
 
     mask = within.astype(np.uint8)
     if not mask.any():
-        return []
+        return [], [], mask
 
     # Connected blobs, so two separate glows don't average into a meaningless
     # point between them.
@@ -292,7 +298,7 @@ def find_colors(
         if join > 0:
             member = (labels == n) & (mask > 0)
             area = int(np.count_nonzero(member))
-            if area < min_pixels:
+            if not area:
                 continue
             rows, columns = np.nonzero(member)
             blob_left, blob_top = int(columns.min()), int(rows.min())
@@ -300,8 +306,6 @@ def find_colors(
             height = int(rows.max()) - blob_top + 1
         else:
             area = int(stats[n, cv2.CC_STAT_AREA])
-            if area < min_pixels:
-                continue
             blob_left = int(stats[n, cv2.CC_STAT_LEFT])
             blob_top = int(stats[n, cv2.CC_STAT_TOP])
             width = int(stats[n, cv2.CC_STAT_WIDTH])
@@ -310,13 +314,106 @@ def find_colors(
 
     blobs.sort(key=_sort_key(order))
 
-    hits = []
+    hits: list[ColorHit] = []
+    turned_down: list[tuple[ColorHit, str]] = []
     for blob_left, blob_top, width, height, area in blobs:
         left = region[0] + blob_left
         top = region[1] + blob_top
-        hits.append(ColorHit(left + width // 2, top + height // 2,
-                             left, top, width, height, area))
-    return hits
+        hit = ColorHit(left + width // 2, top + height // 2,
+                       left, top, width, height, area)
+        # Why a patch is not the thing we are looking for, kept as words so
+        # the GUI can show it rather than leaving you to guess.
+        if area < min_pixels:
+            turned_down.append((hit, f"{area} pixels, under {min_pixels}"))
+        elif width < min_width:
+            turned_down.append((hit, f"{width}px wide, under {min_width}"))
+        elif height < min_height:
+            turned_down.append((hit, f"{height}px tall, under {min_height}"))
+        else:
+            hits.append(hit)
+    return hits, turned_down, mask
+
+
+def find_colors(
+    region: Region,
+    target_rgb: tuple[int, int, int],
+    tolerance: float = 40.0,
+    min_pixels: int = 30,
+    match: str = "rgb",
+    min_saturation: int = 90,
+    min_brightness: int = 70,
+    order: str = "largest",
+    join: int = 0,
+    min_width: int = 0,
+    min_height: int = 0,
+) -> list[ColorHit]:
+    """Every patch of `target_rgb` inside `region`, in the order asked for."""
+    return _search(region, target_rgb, tolerance, min_pixels, match,
+                   min_saturation, min_brightness, order, join,
+                   min_width, min_height)[0]
+
+
+def explain_colors(
+    region: Region,
+    target_rgb: tuple[int, int, int],
+    tolerance: float = 40.0,
+    min_pixels: int = 30,
+    match: str = "rgb",
+    min_saturation: int = 90,
+    min_brightness: int = 70,
+    order: str = "largest",
+    join: int = 0,
+    min_width: int = 0,
+    min_height: int = 0,
+) -> tuple[np.ndarray, list[tuple[ColorHit, str]], list[tuple[ColorHit, str]]]:
+    """A picture of what matched, plus the patches kept and the ones dropped.
+
+    Every matching pixel is tinted, each kept patch is boxed and numbered in
+    the order the search would use them, and each dropped one is boxed faintly.
+    When a background happens to share the color you are hunting for, this is
+    the difference between guessing at settings and seeing the problem.
+    """
+    kept, dropped, mask = _search(region, target_rgb, tolerance, min_pixels,
+                                  match, min_saturation, min_brightness, order,
+                                  join, min_width, min_height)
+
+    picture = grab(region).copy()
+    # How saturated each patch actually is. This is the number that separates
+    # a vivid highlight from a washed-out background of the same hue, and
+    # there is no way to guess it -- it has to be measured.
+    saturation = cv2.cvtColor(picture, cv2.COLOR_BGR2HSV)[:, :, 1]
+
+    def describe(hit: ColorHit) -> str:
+        left, top = hit.left - region[0], hit.top - region[1]
+        inside = mask[top:top + hit.height, left:left + hit.width].astype(bool)
+        values = saturation[top:top + hit.height, left:left + hit.width][inside]
+        if not values.size:
+            return ""
+        return (f"saturation {int(np.percentile(values, 10))}-"
+                f"{int(np.percentile(values, 90))}")
+
+    kept_rows = [(hit, describe(hit)) for hit in kept]
+    dropped_rows = [(hit, f"{why}, {describe(hit)}") for hit, why in dropped]
+    # Tint what matched, keeping some of the original so you can still see
+    # what part of the screen it sits on.
+    if mask.any():
+        tint = np.zeros_like(picture)
+        tint[:, :] = (255, 0, 255)  # magenta, which nothing on screen is
+        where = mask.astype(bool)
+        picture[where] = (0.35 * picture[where] + 0.65 * tint[where]).astype(np.uint8)
+
+    for hit, _why in dropped_rows:
+        left, top = hit.left - region[0], hit.top - region[1]
+        cv2.rectangle(picture, (left, top), (left + hit.width, top + hit.height),
+                      (120, 120, 120), 1)
+    for number, hit in enumerate(kept, start=1):
+        left, top = hit.left - region[0], hit.top - region[1]
+        cv2.rectangle(picture, (left, top), (left + hit.width, top + hit.height),
+                      (0, 230, 0), 2)
+        cv2.circle(picture, (hit.x - region[0], hit.y - region[1]), 5, (0, 230, 0), -1)
+        cv2.putText(picture, str(number), (left + 4, max(16, top - 6)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 230, 0), 2)
+    return picture, kept_rows, dropped_rows
 
 
 def find_color(
@@ -329,10 +426,13 @@ def find_color(
     min_brightness: int = 70,
     order: str = "largest",
     join: int = 0,
+    min_width: int = 0,
+    min_height: int = 0,
 ) -> ColorHit | None:
     """The one patch of `target_rgb` that `order` puts first. See find_colors."""
     hits = find_colors(region, target_rgb, tolerance, min_pixels, match,
-                       min_saturation, min_brightness, order, join)
+                       min_saturation, min_brightness, order, join,
+                       min_width, min_height)
     return hits[0] if hits else None
 
 

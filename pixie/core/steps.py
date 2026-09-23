@@ -145,6 +145,16 @@ _JOIN_HINT = (
     "for a card border - and the whole outline becomes one patch whose middle "
     "is the middle of the card."
 )
+_SIZE_HINT = (
+    "Ignore anything smaller than this. Two numbers, because the thing that "
+    "catches people out is a background which happens to share the color: a "
+    "streak of it can easily have as many pixels as your target while being "
+    "nothing like the same shape.\n"
+    "An outline around a card is both wide and tall, so asking for both at "
+    "once throws away thin streaks and stray glints without touching the "
+    "thing you are after. Measure your target with 'What matches?' and set "
+    "these to a bit under it. 0 means no limit."
+)
 _PICK_HINT = (
     "Several patches of the color can be on screen at once - a row of cards "
     "all glowing, for instance. This decides which one Pixie goes for.\n"
@@ -339,6 +349,10 @@ STEP_TYPES: dict[str, StepType] = {
                        "matching pixels elsewhere don't count."),
             Field("join", "integer", "Join pieces within (px)", 0,
                   minimum=0, maximum=400, hint=_JOIN_HINT),
+            Field("min_width", "integer", "Patch at least this wide (px)", 0,
+                  minimum=0, maximum=4000, hint=_SIZE_HINT),
+            Field("min_height", "integer", "Patch at least this tall (px)", 0,
+                  minimum=0, maximum=4000, hint=_SIZE_HINT),
             Field("pick", "choice", "If several match, use", "largest",
                   choices=PICK_ORDERS, hint=_PICK_HINT),
             Field("timeout", "number", "Give up after (s)", 30.0, hint=_TIMEOUT_HINT),
@@ -370,6 +384,10 @@ STEP_TYPES: dict[str, StepType] = {
                   hint="Ignore patches smaller than this, so a few stray matching pixels elsewhere don't count as a find."),
             Field("join", "integer", "Join pieces within (px)", 0,
                   minimum=0, maximum=400, hint=_JOIN_HINT),
+            Field("min_width", "integer", "Patch at least this wide (px)", 0,
+                  minimum=0, maximum=4000, hint=_SIZE_HINT),
+            Field("min_height", "integer", "Patch at least this tall (px)", 0,
+                  minimum=0, maximum=4000, hint=_SIZE_HINT),
             Field("pick", "choice", "If several match, use", "largest",
                   choices=PICK_ORDERS, hint=_PICK_HINT),
             Field("timeout", "number", "Give it this long (s)", 1.0,

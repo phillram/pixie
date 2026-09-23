@@ -378,6 +378,8 @@ class Engine:
             min_brightness=int(self._value(step, "min_brightness", 70)),
             order=self._value(step, "pick", "largest"),
             join=int(self._value(step, "join", 0)),
+            min_width=int(self._value(step, "min_width", 0)),
+            min_height=int(self._value(step, "min_height", 0)),
         )
         # Keep the count for the log: "1 of 3" is the difference between
         # picking the right card and picking one at random.

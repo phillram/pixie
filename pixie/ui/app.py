@@ -328,6 +328,77 @@ class SettingsDialog:
         return self.saved
 
 
+class MatchViewer:
+    """Shows the search area with everything the color search found marked up."""
+
+    def __init__(self, parent: tk.Misc, picture, kept, dropped,
+                 step: dict[str, Any], scale: float = 1.0) -> None:
+        self.window = tk.Toplevel(parent)
+        self.window.title(f"What matches - {step.get('name') or step.get('type')}")
+        theme.dark_titlebar(self.window)
+        self.window.configure(bg=theme.BG)
+        self.window.transient(parent)  # type: ignore[arg-type]
+
+        frame = ttk.Frame(self.window, padding=int(14 * scale))
+        frame.pack(fill="both", expand=True)
+
+        import cv2
+        from PIL import Image, ImageTk
+
+        shown = Image.fromarray(cv2.cvtColor(picture, cv2.COLOR_BGR2RGB))
+        full = shown.size
+        # Fit it on screen without losing which patch is which.
+        limit = (int(parent.winfo_screenwidth() * 0.8),
+                 int(parent.winfo_screenheight() * 0.5))
+        shown.thumbnail(limit, Image.LANCZOS)
+        photo = ImageTk.PhotoImage(shown)
+
+        holder = tk.Frame(frame, bg=theme.BORDER)
+        holder.pack(anchor="w")
+        label = tk.Label(holder, image=photo, bd=0, bg=theme.PANEL)
+        label.image = photo   # Tk drops the image without a reference
+        label.pack(padx=1, pady=1)
+
+        caption = f"{full[0]} x {full[1]} search area"
+        if shown.size != full:
+            caption += f", shown at {shown.size[0]} x {shown.size[1]}"
+        caption += "     magenta = matched the color     green = would be used"
+        ttk.Label(frame, text=caption, style="Muted.TLabel").pack(anchor="w",
+                                                                  pady=(6, 10))
+
+        report = theme.text(frame, height=min(12, 3 + len(kept) + len(dropped)),
+                            width=92, state="normal")
+        report.pack(fill="both", expand=True)
+        for level, color in LOG_COLORS.items():
+            report.tag_configure(level, foreground=color)
+
+        if kept:
+            report.insert("end", f"Would be used, in order ({step.get('pick')}):\n",
+                          "good")
+            for number, hit in enumerate(kept, start=1):
+                report.insert("end", f"  {number}. {hit.width}x{hit.height} at "
+                                     f"{hit.left}, {hit.top}   {hit.pixels} pixels"
+                                     f"   middle {hit.x}, {hit.y}\n")
+        else:
+            report.insert("end", "Nothing would be used.\n", "warn")
+        if dropped:
+            report.insert("end", f"\nIgnored ({len(dropped)}):\n", "muted")
+            for hit, why in dropped[:40]:
+                report.insert("end", f"  {hit.width}x{hit.height} at {hit.left}, "
+                                     f"{hit.top}   {why}\n", "muted")
+            if len(dropped) > 40:
+                report.insert("end", f"  ...and {len(dropped) - 40} more\n", "muted")
+        report.configure(state="disabled")
+
+        ttk.Button(frame, text="Close", style="Tool.TButton",
+                   command=self.window.destroy).pack(anchor="e", pady=(10, 0))
+        self.window.bind("<Escape>", lambda _e: self.window.destroy())
+        self.window.update_idletasks()
+        x = parent.winfo_rootx() + 40
+        y = parent.winfo_rooty() + 40
+        self.window.geometry(f"+{x}+{y}")
+
+
 class App:
     # Which builder draws each kind of field. A kind that isn't listed falls
     # back to a plain number box, which is wrong but silent -- so
@@ -565,9 +636,19 @@ class App:
         header.columnconfigure(0, weight=1)
         self.editor_title = ttk.Label(header, text="Step settings", style="Title.TLabel")
         self.editor_title.grid(row=0, column=0, sticky="w")
+        self.explain_button = ttk.Button(header, text="What matches?",
+                                         style="Tool.TButton",
+                                         command=self.explain_step, state="disabled")
+        self.explain_button.grid(row=0, column=1, sticky="e", padx=(0, 6))
+        theme.tip(self.explain_button,
+                  "Shows the search area as Pixie sees it: every pixel of the "
+                  "color tinted, every patch boxed, and the ones she would "
+                  "reject greyed out.\n\nUse it when something is matching that "
+                  "should not be - a background that happens to share the "
+                  "color is impossible to diagnose any other way.")
         self.test_button = ttk.Button(header, text="Test this step", style="Tool.TButton",
                                       command=self.test_step, state="disabled")
-        self.test_button.grid(row=0, column=1, sticky="e")
+        self.test_button.grid(row=0, column=2, sticky="e")
         theme.tip(self.test_button,
                   "Run only the selected step, once, and report what it found in "
                   "the log. The quickest way to tune an image or a color without "
@@ -891,6 +972,7 @@ class App:
         if step is None:
             self.editor_title.configure(text="Step settings")
             self.test_button.configure(state="disabled")
+            self.explain_button.configure(state="disabled")
             ttk.Label(self.editor, style="Panel.TLabel", justify="left",
                       text="No step selected.\n\nPress “Add step” to start "
                            "building your sequence.").grid(row=0, column=0, sticky="w")
@@ -907,6 +989,9 @@ class App:
             text=step_type.label if number is None
             else f"Step {number}: {step_type.label}")
         self.test_button.configure(state="normal")
+        searches_an_area = "region" in step_type.field_map() and "color" in step
+        self.explain_button.configure(
+            state="normal" if searches_an_area else "disabled")
         self.editor.columnconfigure(1, weight=1)
 
         ttk.Label(self.editor, text=step_type.blurb, style="Blurb.TLabel",
@@ -1804,6 +1889,7 @@ class App:
         self._refresh_run_tip()
         self.root.title(f"{APP_NAME} - running")
         self.test_button.configure(state="disabled")
+        self.explain_button.configure(state="disabled")
 
         self.worker = threading.Thread(target=self.engine.run, daemon=True)
         self.worker.start()
@@ -1819,6 +1905,55 @@ class App:
         if self.engine:
             self.engine.stop()
         self.status_text.set("Stopping...")
+
+    def explain_step(self) -> None:
+        """Show what the selected color step is actually matching.
+
+        Tuning a color search by reading numbers in a log is guesswork. This
+        photographs the search area, paints every matching pixel, and boxes
+        each patch, so a background that shares the color is obvious instead
+        of mysterious.
+        """
+        step = self.current_step()
+        if step is None or self.running:
+            return
+        region = step.get("region")
+        if not region:
+            self.log("Set the area to search first - there is nothing to look at.",
+                     "warn")
+            return
+
+        self.root.withdraw()
+        self.root.update()
+        time.sleep(0.35)  # let the desktop repaint without Pixie on top of it
+        try:
+            picture, kept, dropped = screen.explain_colors(
+                tuple(region),
+                tuple(step.get("color") or (255, 255, 255)),
+                float(self._setting(step, "tolerance")),
+                int(self._setting(step, "min_pixels")),
+                match=self._setting(step, "match"),
+                min_saturation=int(self._setting(step, "min_saturation")),
+                min_brightness=int(self._setting(step, "min_brightness")),
+                order=self._setting(step, "pick"),
+                join=int(self._setting(step, "join")),
+                min_width=int(self._setting(step, "min_width")),
+                min_height=int(self._setting(step, "min_height")),
+            )
+        except Exception as error:  # noqa: BLE001 - report, don't disappear
+            self.log(f"Could not look at that area: {error!r}", "error")
+            return
+        finally:
+            self.root.deiconify()
+            self.root.lift()
+
+        MatchViewer(self.root, picture, kept, dropped, step, self.scale)
+        self.log(f"{len(kept)} patch(es) would be used, {len(dropped)} ignored.",
+                 "good" if kept else "warn")
+
+    def _setting(self, step: dict[str, Any], key: str) -> Any:
+        """A step's value for a field, or the default its type declares."""
+        return engine_mod.Engine._value(step, key, None)
 
     def test_step(self) -> None:
         step = self.current_step()
@@ -1898,6 +2033,7 @@ class App:
         self.run_button.configure(text="▶  Start", style="Accent.TButton")
         self.status_text.set(f"Idle - {reason}")
         self.test_button.configure(state="normal" if self.current_step() else "disabled")
+        self.build_editor()  # the What-matches button depends on the step type
         if self.root.state() == "iconic":
             self.root.deiconify()
         self.root.lift()
