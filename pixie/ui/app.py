@@ -390,13 +390,37 @@ class MatchViewer:
                 report.insert("end", f"  ...and {len(dropped) - 40} more\n", "muted")
         report.configure(state="disabled")
 
-        ttk.Button(frame, text="Close", style="Tool.TButton",
-                   command=self.window.destroy).pack(anchor="e", pady=(10, 0))
+        buttons = ttk.Frame(frame)
+        buttons.pack(anchor="e", pady=(10, 0))
+        # Nothing is written to disk unless you ask: these are worth keeping
+        # only when you want to compare two attempts or show someone.
+        save = ttk.Button(buttons, text="Save picture...", style="Tool.TButton",
+                          command=lambda: self._save(picture, step))
+        save.pack(side="left", padx=(0, 6))
+        theme.tip(save, "Write this picture to a file. Nothing is saved "
+                        "automatically - it only exists in this window.")
+        ttk.Button(buttons, text="Close", style="Tool.TButton",
+                   command=self.window.destroy).pack(side="left")
         self.window.bind("<Escape>", lambda _e: self.window.destroy())
+        self.window.protocol("WM_DELETE_WINDOW", self.window.destroy)
         self.window.update_idletasks()
         x = parent.winfo_rootx() + 40
         y = parent.winfo_rooty() + 40
         self.window.geometry(f"+{x}+{y}")
+
+    def _save(self, picture, step: dict[str, Any]) -> None:
+        import re
+
+        import cv2
+
+        slug = re.sub(r"[^a-z0-9]+", "_",
+                      str(step.get("name") or "match").lower()).strip("_")
+        target = filedialog.asksaveasfilename(
+            parent=self.window, title="Save this picture",
+            initialdir=str(PROJECT_DIR), initialfile=f"what-matched-{slug}.png",
+            defaultextension=".png", filetypes=[("PNG image", "*.png")])
+        if target:
+            cv2.imwrite(target, picture)
 
 
 class App:

@@ -74,7 +74,18 @@ def main() -> int:
             print(f"Template match  : ({match.x}, {match.y}) score {match.score:.4f}"
                   f"  ({elapsed:.0f} ms)")
             if (match.x, match.y) != expected:
-                failures.append(f"matched at {(match.x, match.y)}, expected {expected}")
+                # The crop comes off the real desktop, and a desktop can show
+                # the same thing twice - a repeated panel, a blank stretch.
+                # Landing on an identical copy is not the matcher failing.
+                scores = cv2.matchTemplate(frame, screen.load_template(tpl_path),
+                                           cv2.TM_CCOEFF_NORMED)
+                copies = int((scores >= 0.9999).sum())
+                if copies > 1:
+                    print(f"                  (that crop appears {copies} times "
+                          f"on screen, so either is correct)")
+                else:
+                    failures.append(
+                        f"matched at {(match.x, match.y)}, expected {expected}")
 
             cx, cy = match.center
             color = screen.pixel_color(cx, cy)
@@ -97,6 +108,7 @@ def main() -> int:
     failures.extend(_check_pick_order())
     failures.extend(_check_broken_outlines_join_up())
     failures.extend(_check_background_of_the_same_color())
+    failures.extend(_check_aiming_at_an_edge())
     failures.extend(_check_every_wait_respects_the_cap())
     failures.extend(_check_declared_defaults())
     failures.extend(_check_click_box())
@@ -614,6 +626,68 @@ def _check_background_of_the_same_color() -> list[str]:
         else:
             print(f"                     reported {note}, so the threshold "
                   f"belongs between {low} and {high}")
+    return problems
+
+
+def _check_aiming_at_an_edge() -> list[str]:
+    """Two targets found as one patch must still be clickable individually.
+
+    Real numbers from a run: two highlighted cards touching came back as one
+    782x314 patch, so its middle landed in the gap between them. Aiming at the
+    patch's left edge and offsetting right lands on the left card whether the
+    two merged or not, which is the whole point.
+    """
+    clicks: list[tuple[int, int]] = []
+
+    class Watching(engine_mod.Engine):
+        def _click(self, x, y, step, what):
+            clicks.append((x, y))
+
+    merged = (1168, 1845, 782, 314)      # left card starts at 1168
+    runner = Watching(engine_mod.Sequence(name="aim", steps=[]), dry_run=True)
+    runner.last_match = (merged[0] + merged[2] // 2, merged[1] + merged[3] // 2)
+    runner.last_box = merged
+
+    problems = []
+    aims = {}
+    for anchor in step_defs.ANCHORS:
+        step = {"type": "click_last_match", "anchor": anchor, "offset": [0, 0]}
+        aims[anchor] = runner._aim(step, merged)
+
+    expected = {
+        "middle": (1559, 2002), "left": (1168, 2002), "right": (1949, 2002),
+        "top": (1559, 1845), "bottom": (1559, 2158),
+        "top_left": (1168, 1845), "top_right": (1949, 1845),
+        "bottom_left": (1168, 2158), "bottom_right": (1949, 2158),
+    }
+    print(f"Aiming          : middle {aims['middle']}, left edge {aims['left']}")
+    for anchor, want in expected.items():
+        if aims[anchor] != want:
+            problems.append(f"aiming at {anchor!r} gave {aims[anchor]}, expected {want}")
+
+    # The useful combination: left edge plus an offset into the card.
+    step = {"type": "click_last_match", "anchor": "left", "offset": [90, 0]}
+    on_the_left_card = runner._aim(step, merged)
+    if on_the_left_card != (1258, 2002):
+        problems.append(f"left edge plus 90 gave {on_the_left_card}")
+    # That point must be inside the left half, where the left card is.
+    if on_the_left_card[0] > merged[0] + merged[2] // 2:
+        problems.append("left edge plus offset still landed on the right card")
+
+    # A step with no anchor set behaves exactly as it always did.
+    runner.run_step({"type": "click_last_match", "offset": [0, 50],
+                     "clicks": 2, "button": "left"})
+    if clicks[-1] != (1559, 2052):
+        problems.append(f"an old step without an anchor clicked {clicks[-1]}, "
+                        "expected the middle plus its offset")
+
+    # And with no box remembered at all, the old point still works.
+    runner.last_box = None
+    runner.run_step({"type": "click_last_match", "offset": [0, 0],
+                     "clicks": 1, "button": "left"})
+    if clicks[-1] != runner.last_match:
+        problems.append(f"without a box it clicked {clicks[-1]}, expected "
+                        f"{runner.last_match}")
     return problems
 
 

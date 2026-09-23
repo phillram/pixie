@@ -79,6 +79,32 @@ COLOR_MATCH = ("hue", "rgb")
 COLOR_MATCH_LABELS = {"hue": "Hue - the shade, at any brightness",
                       "rgb": "RGB - the exact color"}
 
+# Where in the thing that was found to aim the click. The middle is the
+# obvious answer until two targets side by side arrive as one patch, and then
+# the middle is the gap between them -- an edge is the reliable thing.
+ANCHORS = ("middle", "left", "right", "top", "bottom",
+           "top_left", "top_right", "bottom_left", "bottom_right")
+ANCHOR_LABELS = {
+    "middle": "the middle of it",
+    "left": "its left edge",
+    "right": "its right edge",
+    "top": "its top edge",
+    "bottom": "its bottom edge",
+    "top_left": "its top-left corner",
+    "top_right": "its top-right corner",
+    "bottom_left": "its bottom-left corner",
+    "bottom_right": "its bottom-right corner",
+}
+_ANCHOR_HINT = (
+    "Where in the thing that was found to aim, before the offset below is "
+    "applied.\n"
+    "The middle is right nearly always. An edge is the answer when two "
+    "targets can sit side by side and be found as one: two highlighted cards "
+    "touching become one wide patch, and its middle falls between them. Aim "
+    "at the left edge with an offset to the right, and you land on the left "
+    "one whether they merged or not."
+)
+
 # Which patch to use when several match at once. The list itself comes from
 # the matcher, so the dropdown cannot offer an order it does not implement.
 PICK_ORDERS = screen.PICK_ORDERS
@@ -99,6 +125,7 @@ CHOICE_LABELS: dict[str, dict[str, str]] = {
     "mode": COLOR_MODE_LABELS,
     "match": COLOR_MATCH_LABELS,
     "pick": PICK_LABELS,
+    "anchor": ANCHOR_LABELS,
 }
 # What the chosen value actually means, shown under the dropdown.
 CHOICE_NOTES: dict[str, dict[str, str]] = {
@@ -268,8 +295,12 @@ _BUTTON_FIELDS: tuple[Field, ...] = (
                "them as one double-click."),
     Field("button", "choice", "Which mouse button", "left", choices=BUTTONS),
 )
+
+_AIM_FIELD = Field("anchor", "choice", "Aim at", "middle", choices=ANCHORS,
+                   hint=_ANCHOR_HINT)
 # ...plus where to click, for the steps that click whatever they just found.
 _CLICK_FIELDS: tuple[Field, ...] = _BUTTON_FIELDS + (
+    _AIM_FIELD,
     Field("offset", "offset", "Click offset", [0, 0], hint=_OFFSET_HINT),
 )
 

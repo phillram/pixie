@@ -321,6 +321,10 @@ Would be used, in order (leftmost):
   1. 1000x290 at 100, 10   59913 pixels   middle 600, 155   saturation 120-250
 ```
 
+Nothing is written to disk. The picture only exists in that window until you
+close it, and there is a `Save picture...` button if you want to keep one to
+compare against another attempt.
+
 A range that wide is the tell: 120 is the background, 250 is the highlight.
 Set `Min saturation` between them - 180 here - and look again. Now it reads:
 
@@ -339,6 +343,28 @@ Work in this order, because each step depends on the one before:
 
 Joining a dirty mask glues the mess together, which is why saturation comes
 first.
+
+## Two targets that touch
+
+Highlights next to each other can arrive as one patch. Two playable cards
+side by side in a hand, their outlines touching, come back as a single wide
+box - and the middle of that box is the gap between the two cards. No amount
+of joining or unjoining fixes it, because at that point the two outlines are
+genuinely one shape.
+
+`Aim at` is the answer. Every step that clicks something it found can aim at
+an edge or a corner instead of the middle, and the offset is applied from
+there:
+
+| Aim at | Then offset by | Lands on |
+| --- | --- | --- |
+| the middle of it | 0, 0 | the middle - wrong when two merged |
+| its left edge | +90, 0 | the left one, merged or not |
+
+On a real pair of merged card outlines 720px wide, the middle lands at 560 -
+exactly the seam - while the left edge plus 90 lands at 290, well inside the
+left card. It works the same whether the cards merged that frame or not,
+which is what makes it reliable rather than lucky.
 
 ## Several things glowing at once
 

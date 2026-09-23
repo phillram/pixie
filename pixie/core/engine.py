@@ -207,6 +207,10 @@ class Engine:
         # How many patches the last color search turned up, so the log
         # can say which of them was chosen.
         self.last_candidates = 0
+        # The box the last match occupied, so a click can be aimed at one of
+        # its edges. Two highlighted things side by side can arrive as one
+        # patch, and the middle of that patch is the gap between them.
+        self.last_box: tuple[int, int, int, int] | None = None
 
     # -- plumbing --------------------------------------------------------
 
@@ -249,6 +253,32 @@ class Engine:
     @staticmethod
     def _region(value: Any) -> tuple[int, int, int, int] | None:
         return tuple(value) if value else None  # type: ignore[return-value]
+
+    def _aim(self, step: dict[str, Any],
+             box: tuple[int, int, int, int]) -> tuple[int, int]:
+        """Where to click on something that was found: anchor, then offset.
+
+        Anchoring somewhere other than the middle is what saves you when two
+        targets side by side are found as one patch -- its middle lands in the
+        gap between them, while its left edge is still the left one's edge.
+        """
+        left, top, width, height = box
+        anchor = str(self._value(step, "anchor", "middle"))
+        if "left" in anchor:
+            x = left
+        elif "right" in anchor:
+            x = left + max(0, width - 1)
+        else:
+            x = left + width // 2
+        if "top" in anchor:
+            y = top
+        elif "bottom" in anchor:
+            y = top + max(0, height - 1)
+        else:
+            y = top + height // 2
+
+        off_x, off_y = step.get("offset") or (0, 0)
+        return x + int(off_x), y + int(off_y)
 
     def _click(self, x: int, y: int, step: dict[str, Any], what: str) -> None:
         clicks = int(self._value(step, "clicks", 1) or 1)
@@ -420,15 +450,16 @@ class Engine:
         )
         if hit is None:
             self.last_match = None
+            self.last_box = None
             self.log(f"    no {self._color_description(step)} "
                      f"{self._gave_up(self._timeout(step))}, skipping")
             return "ok"
 
         self.last_match = hit.center
-        off_x, off_y = step.get("offset") or (0, 0)
+        self.last_box = (hit.left, hit.top, hit.width, hit.height)
         self.log(f"    found it - {hit.pixels} pixels in a "
                  f"{hit.width}x{hit.height} box{self._which_one(step)}")
-        self._click(hit.x + off_x, hit.y + off_y, step, "the color")
+        self._click(*self._aim(step, self.last_box), step, "the color")
         return "ok"
 
     def _do_wait_for_color_in_area(self, step: dict[str, Any]) -> str:
@@ -447,11 +478,13 @@ class Engine:
             # Don't leave a stale position behind for a later "click the last
             # thing found" to pick up and click somewhere wrong.
             self.last_match = None
+            self.last_box = None
             self.log(f"    no patch of RGB{target} at least {min_pixels}px "
                      f"in that area {self._gave_up(self._timeout(step))}",
                      "warn")
             return "timeout"
         self.last_match = hit.center
+        self.last_box = (hit.left, hit.top, hit.width, hit.height)
         self.log(f"    found RGB{target} - {hit.pixels} pixels in a "
                  f"{hit.width}x{hit.height} box, center {hit.x}, {hit.y}"
                  f"{self._which_one(step)}")
@@ -462,10 +495,12 @@ class Engine:
         match = self._find(step, waited)
         if match is None:
             self.last_match = None
+            self.last_box = None
             self.log(f"    {Path(step['image']).name} did not appear "
                      f"{self._gave_up(waited)}", "warn")
             return "timeout"
         self.last_match = match.center
+        self.last_box = (match.x, match.y, match.width, match.height)
         self.log(f"    found {Path(step['image']).name} at {match.x}, {match.y} "
                  f"(score {match.score:.3f})")
         return "ok"
@@ -475,28 +510,30 @@ class Engine:
         match = self._find(step, waited)
         if match is None:
             self.last_match = None
+            self.last_box = None
             self.log(f"    {Path(step['image']).name} did not appear "
                      f"{self._gave_up(waited)}", "warn")
             return "timeout"
         self.last_match = match.center
+        self.last_box = (match.x, match.y, match.width, match.height)
         self.log(f"    found {Path(step['image']).name} at {match.x}, {match.y} "
                  f"(score {match.score:.3f})")
-        off_x, off_y = step.get("offset") or (0, 0)
-        cx, cy = match.center
-        self._click(cx + off_x, cy + off_y, step, Path(step["image"]).name)
+        self._click(*self._aim(step, self.last_box), step,
+                    Path(step["image"]).name)
         return "ok"
 
     def _do_click_image_if_present(self, step: dict[str, Any]) -> str:
         match = self._find(step, self._timeout(step))
         if match is None:
             self.last_match = None
+            self.last_box = None
             self.log(f"    {Path(step['image']).name} not there "
                      f"{self._gave_up(self._timeout(step))}, skipping")
             return "ok"
         self.last_match = match.center
-        off_x, off_y = step.get("offset") or (0, 0)
-        cx, cy = match.center
-        self._click(cx + off_x, cy + off_y, step, Path(step["image"]).name)
+        self.last_box = (match.x, match.y, match.width, match.height)
+        self._click(*self._aim(step, self.last_box), step,
+                    Path(step["image"]).name)
         return "ok"
 
     def _do_click_point(self, step: dict[str, Any]) -> str:
@@ -523,9 +560,11 @@ class Engine:
             self.log("    the step before this one found nothing, so there is "
                      "nothing to click", "error")
             return "timeout"
-        off_x, off_y = step.get("offset") or (0, 0)
-        x, y = self.last_match
-        self._click(x + off_x, y + off_y, step, "last match")
+        box = self.last_box or (self.last_match[0], self.last_match[1], 1, 1)
+        where = str(self._value(step, "anchor", "middle"))
+        what = ("last match" if where == "middle"
+                else f"last match ({step_defs.ANCHOR_LABELS.get(where, where)})")
+        self._click(*self._aim(step, box), step, what)
         return "ok"
 
     def _do_press_key(self, step: dict[str, Any]) -> str:
@@ -784,6 +823,7 @@ class Engine:
                     self.cycles_completed += 1
                     self.emit({"kind": "cycle", "completed": self.cycles_completed})
                 self.last_match = None
+                self.last_box = None
                 self._sleep(self.sequence.settings.cycle_pause())
             else:
                 reason = f"finished {max_cycles} cycle(s)"
