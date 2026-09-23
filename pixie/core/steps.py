@@ -542,6 +542,45 @@ STEP_TYPES = {
 }
 
 
+# How the Add step menu is laid out ------------------------------------
+
+# Thirteen step types in one flat list is a wall of similar-sounding names,
+# and the difference between "Click an image" and "Click an image if it
+# appears" is not something you should have to open each one to learn. The
+# menu is grouped under these headings, and each entry carries a few words
+# saying what it is for.
+#
+# Every step type belongs to exactly one group and has a hint; check_wiring
+# enforces both, so a new type cannot be declared above and then quietly go
+# missing from the only menu that can create it.
+STEP_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("Structure", ("section", "note")),
+    ("Wait until something appears",
+     ("wait_for_image", "wait_for_color", "wait_for_color_in_area")),
+    ("Click what Pixie finds",
+     ("click_image", "click_image_if_present", "click_color_if_present",
+      "click_last_match")),
+    ("Click where you say", ("click_point", "click_box")),
+    ("Keyboard and waiting", ("press_key", "wait")),
+)
+
+MENU_HINTS: dict[str, str] = {
+    "section": "start a new section",
+    "note": "a reminder to yourself, never run",
+    "wait_for_image": "hold here until a picture shows up",
+    "wait_for_color": "hold here until one spot turns a color",
+    "wait_for_color_in_area": "find a glow and remember where it is",
+    "click_image": "wait for a picture, then click it",
+    "click_image_if_present": "click a picture, carry on if it is absent",
+    "click_color_if_present": "click a glow, carry on if it is absent",
+    "click_last_match": "click whatever the step above it found",
+    "click_point": "click one exact spot",
+    "click_box": "click a random spot inside a box",
+    "press_key": "type keys, or a shortcut like Ctrl+S",
+    "wait": "do nothing for a moment",
+}
+
+
 def new_step(type_key: str) -> dict[str, Any]:
     """A fresh step of the given type, with every field at its default."""
     step_type = STEP_TYPES[type_key]

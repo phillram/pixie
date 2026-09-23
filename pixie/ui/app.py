@@ -420,6 +420,11 @@ def show_matches(parent: tk.Misc, picture, kept, dropped,
             lines.append((f"  {number}. {hit.width}x{hit.height} at {hit.left}, "
                           f"{hit.top}   {hit.pixels} pixels   middle {hit.x}, "
                           f"{hit.y}   {note}", "info"))
+            if hit.pieces > 1:
+                lines.append((f"      {hit.pieces} separate pieces, joined "
+                              f"because they are within {step.get('join')}px of "
+                              "each other. Set that to 0 and look again to see "
+                              "them apart", "warn"))
             if hit.clipped:
                 lines.append((f"      runs off the {hit.clipped} of the search "
                               "area, so it is cut off - widen the area", "warn"))
@@ -906,9 +911,20 @@ class App:
         menu = tk.Menu(self.root, tearoff=0, bg=theme.PANEL, fg=theme.FG,
                        activebackground=theme.ACCENT_DARK, activeforeground="#ffffff",
                        borderwidth=0)
-        for key, step_type in step_defs.STEP_TYPES.items():
-            menu.add_command(label=step_type.label,
-                             command=lambda k=key: self.add_step(k))
+        # Grouped under headings, with a few words on each entry saying what
+        # it is for. A flat list of thirteen similar names meant opening each
+        # one to find out which was which.
+        for number, (heading, keys) in enumerate(step_defs.STEP_GROUPS):
+            if number:
+                menu.add_separator()
+            menu.add_command(label=heading.upper(), state="disabled",
+                             background=theme.PANEL, foreground=theme.MUTED)
+            for key in keys:
+                step_type = step_defs.STEP_TYPES[key]
+                menu.add_command(
+                    label="   " + step_type.label,
+                    accelerator=step_defs.MENU_HINTS.get(key, ""),
+                    command=lambda k=key: self.add_step(k))
         widget = self.root.focus_get() or self.root
         menu.tk_popup(widget.winfo_pointerx(), widget.winfo_pointery())
 

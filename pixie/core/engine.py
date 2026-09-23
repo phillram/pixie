@@ -229,6 +229,11 @@ class Engine:
         self.last_box: tuple[int, int, int, int] | None = None
         # Where that match met each of its edges, when it could tell us.
         self.last_edges: dict[str, int] | None = None
+        # What was untrustworthy about that box. The step that clicks a match
+        # is usually not the step that found it, so these travel with it: only
+        # at the click is it known which edge is being aimed at.
+        self.last_pieces = 1
+        self.last_clipped = ""
 
     # -- plumbing --------------------------------------------------------
 
@@ -478,6 +483,67 @@ class Engine:
             note += ". Widen the area if clicks land oddly."
         self.log(note, "warn")
 
+    # -- what the last match was, for the step that clicks it ------------
+    #
+    # Five step types find something and one clicks whatever was found, so
+    # these were being set by hand in eleven places. Adding a sixth thing to
+    # remember meant remembering to add it eleven times, which is how a click
+    # ends up aimed using a box from two steps ago.
+
+    def _forget_match(self) -> None:
+        """Nothing was found, so everything remembered about one is stale."""
+        self.last_match = None
+        self.last_box = None
+        self.last_edges = None
+        self.last_pieces = 1
+        self.last_clipped = ""
+
+    def _remember_color(self, hit) -> None:
+        self.last_match = hit.center
+        self.last_box = (hit.left, hit.top, hit.width, hit.height)
+        self.last_edges = self._edges_of(hit)
+        self.last_pieces = hit.pieces
+        self.last_clipped = hit.clipped
+
+    def _remember_image(self, match) -> None:
+        self.last_match = match.center
+        self.last_box = (match.x, match.y, match.width, match.height)
+        # A template is a rectangle, so it has no shape to follow and no
+        # pieces: every edge of the box is an edge of the thing.
+        self.last_edges = None
+        self.last_pieces = 1
+        self.last_clipped = ""
+
+    def _aim_warning(self, where: str) -> None:
+        """Say when the edge being aimed at is not a trustworthy edge.
+
+        The step that finds a patch and the step that clicks it are usually
+        two different steps, so neither one can see the whole picture on its
+        own: the finder knows the patch is joined or cut off, the clicker
+        knows which edge is being aimed at. This runs at the click, where both
+        are finally known.
+
+        Joining matters most here. It exists because an outline arrives broken
+        into fragments, but the cost is that anything else of the same color
+        close enough gets swept up too, and it then owns whichever edge of the
+        patch it lies on. Nothing looks wrong when that happens -- the patch
+        passes every size floor, because the real outline carries it -- so the
+        only visible symptom is a click landing somewhere strange.
+        """
+        if where == "middle":
+            return
+        if self.last_pieces > 1:
+            self.log(f"    that patch is {self.last_pieces} separate pieces "
+                     f"joined together, so its {where} edge belongs to "
+                     "whichever piece sits furthest that way, which may not be "
+                     "part of what you are after. Set 'Join pieces within' to "
+                     "0 on the step that found it and press 'What matches?' to "
+                     "see the pieces on their own.", "warn")
+        if where in self.last_clipped:
+            self.log(f"    the {where} edge you are aiming at is where the "
+                     "search area was cut, not where the patch really ends. "
+                     "Widen the area on the step that found it.", "warn")
+
     def _which_one(self, step: dict[str, Any]) -> str:
         """Which of several patches was taken, and whether that looks wrong."""
         if self.last_candidates <= 1:
@@ -511,19 +577,16 @@ class Engine:
             self._color_description(step),
         )
         if hit is None:
-            self.last_match = None
-            self.last_box = None
-            self.last_edges = None
+            self._forget_match()
             self.log(f"    no {self._color_description(step)} "
                      f"{self._gave_up(self._timeout(step))}, skipping")
             return "ok"
 
-        self.last_match = hit.center
-        self.last_box = (hit.left, hit.top, hit.width, hit.height)
-        self.last_edges = self._edges_of(hit)
+        self._remember_color(hit)
         self.log(f"    found it - {hit.pixels} pixels in a "
                  f"{hit.width}x{hit.height} box{self._which_one(step)}")
         self._edge_warning(hit, step)
+        self._aim_warning(str(self._value(step, "anchor", "middle")))
         self._click(*self._aim(step, self.last_box, self.last_edges), step,
                     "the color")
         return "ok"
@@ -543,18 +606,15 @@ class Engine:
         if hit is None:
             # Don't leave a stale position behind for a later "click the last
             # thing found" to pick up and click somewhere wrong.
-            self.last_match = None
-            self.last_box = None
-            self.last_edges = None
+            self._forget_match()
             self.log(f"    no patch of RGB{target} at least {min_pixels}px "
                      f"in that area {self._gave_up(self._timeout(step))}",
                      "warn")
             return "timeout"
-        self.last_match = hit.center
-        self.last_box = (hit.left, hit.top, hit.width, hit.height)
-        self.last_edges = self._edges_of(hit)
+        self._remember_color(hit)
+        pieces = f", {hit.pieces} pieces joined" if hit.pieces > 1 else ""
         self.log(f"    found RGB{target} - {hit.pixels} pixels in a "
-                 f"{hit.width}x{hit.height} box, center {hit.x}, {hit.y}"
+                 f"{hit.width}x{hit.height} box{pieces}, center {hit.x}, {hit.y}"
                  f"{self._which_one(step)}")
         self._edge_warning(hit, step)
         return "ok"
@@ -563,15 +623,11 @@ class Engine:
         waited = self._timeout(step)
         match = self._find(step, waited)
         if match is None:
-            self.last_match = None
-            self.last_box = None
-            self.last_edges = None
+            self._forget_match()
             self.log(f"    {Path(step['image']).name} did not appear "
                      f"{self._gave_up(waited)}", "warn")
             return "timeout"
-        self.last_match = match.center
-        self.last_box = (match.x, match.y, match.width, match.height)
-        self.last_edges = None
+        self._remember_image(match)
         self.log(f"    found {Path(step['image']).name} at {match.x}, {match.y} "
                  f"(score {match.score:.3f})")
         return "ok"
@@ -580,15 +636,11 @@ class Engine:
         waited = self._timeout(step)
         match = self._find(step, waited)
         if match is None:
-            self.last_match = None
-            self.last_box = None
-            self.last_edges = None
+            self._forget_match()
             self.log(f"    {Path(step['image']).name} did not appear "
                      f"{self._gave_up(waited)}", "warn")
             return "timeout"
-        self.last_match = match.center
-        self.last_box = (match.x, match.y, match.width, match.height)
-        self.last_edges = None
+        self._remember_image(match)
         self.log(f"    found {Path(step['image']).name} at {match.x}, {match.y} "
                  f"(score {match.score:.3f})")
         self._click(*self._aim(step, self.last_box), step,
@@ -598,15 +650,11 @@ class Engine:
     def _do_click_image_if_present(self, step: dict[str, Any]) -> str:
         match = self._find(step, self._timeout(step))
         if match is None:
-            self.last_match = None
-            self.last_box = None
-            self.last_edges = None
+            self._forget_match()
             self.log(f"    {Path(step['image']).name} not there "
                      f"{self._gave_up(self._timeout(step))}, skipping")
             return "ok"
-        self.last_match = match.center
-        self.last_box = (match.x, match.y, match.width, match.height)
-        self.last_edges = None
+        self._remember_image(match)
         self._click(*self._aim(step, self.last_box), step,
                     Path(step["image"]).name)
         return "ok"
@@ -640,6 +688,7 @@ class Engine:
         where = str(self._value(step, "anchor", "middle"))
         what = ("last match" if where == "middle"
                 else f"last match ({step_defs.ANCHOR_LABELS.get(where, where)})")
+        self._aim_warning(where)
         self._click(*self._aim(step, box, edges), step, what)
         return "ok"
 
@@ -924,9 +973,7 @@ class Engine:
                 if outcome == "ok":
                     self.cycles_completed += 1
                     self.emit({"kind": "cycle", "completed": self.cycles_completed})
-                self.last_match = None
-                self.last_box = None
-                self.last_edges = None
+                self._forget_match()
                 self._sleep(self.sequence.settings.cycle_pause())
             else:
                 reason = f"finished {max_cycles} cycle(s)"

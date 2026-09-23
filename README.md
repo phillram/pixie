@@ -175,21 +175,34 @@ have not saved yet is not in any file, so its picture looks unused.
 
 ### The steps
 
+**Add step** groups them under these headings, and repeats the short
+description beside each name, so you can tell `Click an image` from `Click an
+image if it appears` without opening both.
+
 | Step | What it does |
 | --- | --- |
-| Wait for a color | Pause until a color appears at one spot |
-| Find a color in an area | Search a region for a color and use the middle of what it finds |
-| Click a color if it appears | Optional. Clicks it if present, skips if not |
-| Wait for an image | Pause until a picture appears. Does not click |
-| Click an image | Find a picture and click it |
-| Click an image if it appears | Optional version of the above |
-| Click a fixed spot | Always the same coordinates |
-| Click anywhere in a box | Drag a box, get a random spot inside it every time |
-| Click the last thing found | Click wherever the previous step found something |
-| Press a key | Send a keystroke, optionally several times |
-| Wait a moment | Pause for a fixed or random length of time |
+| **Structure** | |
 | Section divider | Marks the start of a section |
 | Note | Does nothing. Somewhere to explain the sequence to yourself |
+| **Wait until something appears** | |
+| Wait for an image | Pause until a picture appears. Does not click |
+| Wait for a color | Pause until a color appears at one spot |
+| Find a color in an area | Search a region for a color and use the middle of what it finds |
+| **Click what Pixie finds** | |
+| Click an image | Find a picture and click it |
+| Click an image if it appears | Optional version of the above |
+| Click a color if it appears | Optional. Clicks it if present, skips if not |
+| Click the last thing found | Click wherever the previous step found something |
+| **Click where you say** | |
+| Click a fixed spot | Always the same coordinates |
+| Click anywhere in a box | Drag a box, get a random spot inside it every time |
+| **Keyboard and waiting** | |
+| Press a key | Send a keystroke, optionally several times |
+| Wait a moment | Pause for a fixed or random length of time |
+
+The grouping lives in `STEP_GROUPS` in `pixie/core/steps.py` next to the step
+types themselves, and `check_wiring.py` fails if a type is declared without a
+place in the menu - since the menu is the only way to create one.
 
 ### When something does not turn up
 
@@ -307,6 +320,38 @@ Once the whole outline is one patch, a following `Click the last thing found`
 wants an offset of `0, 0`: the middle of the outline is already the middle of
 the card. An offset was only ever needed to compensate for landing on a
 fragment.
+
+### What joining costs
+
+Joining sweeps up *anything* of the same color within reach, not only pieces
+of the thing you meant. A lit prop in the background 50px from a card gets
+pulled in, and then the patch is wider than the card, and its left edge is the
+prop's left edge rather than the card's.
+
+Nothing about that patch looks wrong. Sizes are only measured after joining -
+which is the whole point, since fragments are short on their own and tall
+together - so the intruder inherits the outline's height and sails past every
+minimum you set. The only symptom is a click landing somewhere strange.
+
+So Pixie counts the pieces and says so:
+
+```
+found RGB(37, 254, 254) - 6848 pixels in a 478x313 box, 2 pieces joined, ...
+    that patch is 2 separate pieces joined together, so its left edge belongs
+    to whichever piece sits furthest that way, which may not be part of what
+    you are after.
+```
+
+It only says this when a step aims at an *edge*. Aiming at the middle of a
+patch is barely affected by a small piece joined on; aiming at an edge means
+that piece decides where the click goes.
+
+To see which piece is the intruder, set `Join pieces within` to 0 and press
+**What matches?**. The pieces appear separately, and the one that is not part
+of the thing you want is obvious. Then either tighten `Tolerance` or raise
+`Min saturation` until it stops matching at all, or shrink the search area so
+it falls outside. Lowering the join below the gap works too, but only if that
+still leaves enough to bridge the real gaps in the outline.
 
 ## When the background is the same color
 

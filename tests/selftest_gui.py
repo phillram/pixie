@@ -1172,6 +1172,50 @@ def check_image_and_color_previews():
     return problems
 
 
+def check_add_menu_is_grouped():
+    """Add step lists every type under a heading, with a hint on each."""
+    problems = []
+    captured = {}
+
+    # tk_popup blocks on a real menu, so catch the menu as it is posted.
+    original = tk.Menu.tk_popup
+    tk.Menu.tk_popup = lambda self, *rest: captured.setdefault("menu", self)
+    try:
+        app._show_add_menu()
+    finally:
+        tk.Menu.tk_popup = original
+
+    menu = captured.get("menu")
+    if menu is None:
+        return ["Add step never posted a menu"]
+
+    headings, entries = [], {}
+    for index in range(menu.index("end") + 1):
+        if menu.type(index) == "separator":
+            continue
+        label = str(menu.entrycget(index, "label"))
+        if str(menu.entrycget(index, "state")) == "disabled":
+            headings.append(label)
+        else:
+            entries[label.strip()] = str(menu.entrycget(index, "accelerator"))
+
+    wanted = [heading.upper() for heading, _ in step_defs.STEP_GROUPS]
+    if headings != wanted:
+        problems.append(f"menu headings are {headings}, expected {wanted}")
+
+    for key, step_type in step_defs.STEP_TYPES.items():
+        if step_type.label not in entries:
+            problems.append(f"{key!r} is missing from the Add step menu")
+        elif not entries[step_type.label]:
+            problems.append(f"{key!r} has no hint beside it in the menu")
+
+    print(f"  add menu: {len(headings)} headings, {len(entries)} step types, "
+          "all with a hint")
+    print(f"    {headings[1]}: " + ", ".join(
+        step_defs.STEP_TYPES[key].label for key in step_defs.STEP_GROUPS[1][1]))
+    return problems
+
+
 def _descendants(widget):
     for child in widget.winfo_children():
         yield child
@@ -1308,7 +1352,7 @@ for check in (check_boxes_can_be_typed_into, check_panes_can_be_dragged,
               check_what_matches_window, check_show_the_click,
               check_testing_a_step_runs_it_once,
               check_window_size_is_remembered,
-              check_settings_stick):
+              check_settings_stick, check_add_menu_is_grouped):
     try:
         failures.extend(check())
     except Exception as error:  # noqa: BLE001

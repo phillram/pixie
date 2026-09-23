@@ -111,6 +111,7 @@ def main() -> int:
     failures.extend(_check_aiming_at_an_edge())
     failures.extend(_check_edges_follow_the_shape())
     failures.extend(_check_a_mostly_hidden_outline())
+    failures.extend(_check_a_speck_swept_up_by_the_join())
     failures.extend(_check_a_section_with_nothing_switched_on())
     failures.extend(_check_every_wait_respects_the_cap())
     failures.extend(_check_declared_defaults())
@@ -825,6 +826,77 @@ def _check_a_mostly_hidden_outline() -> list[str]:
     if any(piece.height >= 90 for piece in in_pieces):
         print(f"                  (tallest loose piece "
               f"{max(p.height for p in in_pieces)}px)")
+    return problems
+
+
+def _check_a_speck_swept_up_by_the_join() -> list[str]:
+    """Joining can rescue something the size filters were there to reject.
+
+    Size is only measured after joining, which is the whole point: an outline
+    broken into fragments is short in pieces and tall together. The cost is
+    that a speck of the same color near enough to be swept up inherits the
+    outline's size, passes every filter, and then owns whichever edge of the
+    patch it lies on - so aiming at that edge aims at the speck.
+
+    Nothing about the patch looks wrong when this happens. The only way to
+    notice is to be told how many pieces went into it.
+    """
+    from pixie.system import screen as screen_mod
+
+    def hsv(h, s, v):
+        return tuple(int(c) for c in cv2.cvtColor(
+            np.array([[[h, s, v]]], dtype=np.uint8), cv2.COLOR_HSV2BGR)[0, 0])
+
+    frame = np.zeros((313, 1200, 3), dtype=np.uint8)
+    glow = hsv(90, 250, 250)
+    frame[20:310, 120:600] = glow       # the card outline we actually want
+    frame[0:58, 16:68] = glow           # a lit prop in the background, 52px off
+
+    original = screen_mod.grab
+    screen_mod.grab = lambda _region=None: frame
+    try:
+        common = dict(region=(0, 0, 1200, 313), target_rgb=(37, 254, 254),
+                      tolerance=14, min_pixels=39, match="hue",
+                      order="leftmost", min_height=90)
+        alone = screen_mod.find_colors(join=0, **common)
+        swept = screen_mod.find_colors(join=40, **common)
+    finally:
+        screen_mod.grab = original
+
+    problems = []
+    print(f"Swept-up speck  : join 0 keeps {len(alone)} patch, "
+          f"join 40 keeps {len(swept)} of {swept[0].pieces if swept else 0} "
+          "pieces")
+
+    # On its own the speck is 58px tall and the filter drops it.
+    if len(alone) != 1 or alone[0].left != 120:
+        problems.append("without joining, the speck was not filtered out on "
+                        f"its own - kept {[(h.left, h.height) for h in alone]}")
+    if len(swept) != 1:
+        problems.append(f"joining gave {len(swept)} patches, expected 1")
+        return problems
+    if swept[0].pieces != 2:
+        problems.append(f"the patch reports {swept[0].pieces} pieces, "
+                        "expected 2 - the speck is not being counted")
+    if swept[0].left != 16:
+        problems.append("the speck was not actually swept in, so this test no "
+                        "longer reproduces the problem it is about")
+    print(f"                  left edge moved {120 - swept[0].left}px onto the "
+          "speck, which the piece count now reports")
+
+    # And the engine has to say so at the click, where the aim is known.
+    said: list[str] = []
+    runner = engine_mod.Engine(engine_mod.Sequence(), emit=lambda event: said.append(
+        str(event.get("message", ""))) if event.get("level") == "warn" else None)
+    runner._remember_color(swept[0])
+    runner._aim_warning("left")
+    if not any("2 separate pieces" in line for line in said):
+        problems.append(f"aiming at an edge of a joined patch said nothing "
+                        f"useful: {said}")
+    said.clear()
+    runner._aim_warning("middle")
+    if said:
+        problems.append(f"aiming at the middle warned needlessly: {said}")
     return problems
 
 

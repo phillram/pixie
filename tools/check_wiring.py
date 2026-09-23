@@ -63,6 +63,21 @@ def main() -> int:
 
     print(f"  {len(steps.STEP_TYPES)} step types, all wired to the engine")
 
+    # The Add step menu is the only way to create a step, so a type missing
+    # from it cannot be used at all.
+    grouped: list[str] = [key for _, keys in steps.STEP_GROUPS for key in keys]
+    for key in steps.STEP_TYPES:
+        if grouped.count(key) != 1:
+            problems.append(f"step type {key!r} appears {grouped.count(key)} "
+                            "times in STEP_GROUPS, should be once")
+        if not steps.MENU_HINTS.get(key):
+            problems.append(f"step type {key!r} has no hint in MENU_HINTS")
+    for key in grouped:
+        if key not in steps.STEP_TYPES:
+            problems.append(f"STEP_GROUPS lists {key!r}, which is not a step type")
+
+    print(f"  {len(steps.STEP_GROUPS)} menu groups, covering every step type")
+
     # Every kind of field must have an editor to draw it. Without this, a new
     # kind quietly falls back to a number box that edits the wrong thing.
     from pixie.ui.app import App

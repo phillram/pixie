@@ -179,6 +179,11 @@ class ColorHit:
     # that touches an edge is probably a cut-off piece of something bigger,
     # which makes its size and its edges untrustworthy.
     clipped: str = ""
+    # How many separate runs of pixels 'Join pieces within' glued together to
+    # make this one patch. More than one means the box is wider than anything
+    # actually on screen, and its edges belong to whichever piece happens to
+    # sit furthest out -- which may not be part of the thing you are after.
+    pieces: int = 1
 
     @property
     def center(self) -> tuple[int, int]:
@@ -318,9 +323,16 @@ def _search(
         window = (slice(box_top, box_top + int(stats[n, cv2.CC_STAT_HEIGHT])),
                   slice(box_left, box_left + int(stats[n, cv2.CC_STAT_WIDTH])))
         member = labels[window] == n
+        pieces = 1
         if join > 0:
             # Grouping was done on a fattened copy, so measure the real pixels.
             member &= mask[window] > 0
+            # ...and count what was glued together. A patch built from several
+            # pieces is the one place joining can go wrong: a speck of the
+            # wrong color close enough to be swept up stretches the box and
+            # takes over whichever edge it lies on.
+            pieces = max(1, cv2.connectedComponentsWithStats(
+                member.astype(np.uint8), connectivity=8)[0] - 1)
         area = int(np.count_nonzero(member))
         if not area:
             continue
@@ -347,6 +359,7 @@ def _search(
             box_top + int(np.median(along_right)),
             box_left + int(np.median(along_top)),
             box_left + int(np.median(along_bottom)),
+            pieces,
         ))
 
     blobs.sort(key=_sort_key(order))
@@ -358,7 +371,7 @@ def _search(
     hits: list[ColorHit] = []
     turned_down: list[tuple[ColorHit, str]] = []
     for (blob_left, blob_top, width, height, area,
-         left_y, right_y, top_x, bottom_x) in blobs:
+         left_y, right_y, top_x, bottom_x, pieces) in blobs:
         left = region[0] + blob_left
         top = region[1] + blob_top
         # Only count an edge as a crop if moving the search area could
@@ -382,7 +395,7 @@ def _search(
                        left, top, width, height, area,
                        left_y=region[1] + left_y, right_y=region[1] + right_y,
                        top_x=region[0] + top_x, bottom_x=region[0] + bottom_x,
-                       clipped=" and ".join(touching))
+                       clipped=" and ".join(touching), pieces=pieces)
         # Why a patch is not the thing we are looking for, kept as words so
         # the GUI can show it rather than leaving you to guess.
         if area < min_pixels:
