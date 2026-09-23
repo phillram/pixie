@@ -107,6 +107,7 @@ def main() -> int:
     failures.extend(_check_a_jump_sends_the_run_somewhere())
     failures.extend(_check_the_sequence_wide_timeout())
     failures.extend(_check_the_aim_warning_reads_as_english())
+    failures.extend(_check_parking_only_after_a_click())
     failures.extend(_check_parking_and_gliding())
     failures.extend(_check_a_near_miss_reports_its_score())
     failures.extend(_check_max_cycles_is_a_real_limit())
@@ -459,6 +460,61 @@ def _check_a_jump_sends_the_run_somewhere() -> list[str]:
     # the same branches rather than two copies of them.
     if not set(step_defs.JUMP_TARGETS) <= set(step_defs.ON_TIMEOUT):
         problems.append("a jump can go somewhere no 'if not found' can")
+    return problems
+
+
+def _check_parking_only_after_a_click() -> list[str]:
+    """Parking after a step that never moved the pointer is pure cost.
+
+    Parking exists to move the pointer off whatever was just clicked. A step
+    that only looks at the screen never moved it, so there is nothing to move
+    off - and with gliding switched on, each pointless park is a quarter of a
+    second spent crossing the screen and back. In a loop of seven steps where
+    two of them click, that was five wasted journeys on every single pass.
+    """
+    from pixie.system import mouse as mouse_mod
+
+    parked: list[tuple[int, int]] = []
+    settings = engine_mod.Settings(
+        park_mouse="custom", park_box=[900, 500, 10, 10],
+        step_pause_min=0, step_pause_max=0, cycle_pause_min=0,
+        cycle_pause_max=0, failsafe_corner=False)
+
+    looked = {"type": "wait_for_image", "name": "look", "enabled": True,
+              "image": "x", "on_timeout": "continue", "pause": [0, 0]}
+    clicked = {"type": "click_point", "name": "click", "enabled": True,
+               "pos": [100, 200], "clicks": 1, "button": "left",
+               "pause": [0, 0]}
+
+    class Watching(engine_mod.Engine):
+        def run_step(self, step):
+            if step["type"] == "wait_for_image":
+                return "ok"          # found it, without touching the mouse
+            return super().run_step(step)
+
+    original = mouse_mod.move_to
+    mouse_mod.move_to = lambda x, y: parked.append((int(x), int(y)))
+    try:
+        runner = Watching(engine_mod.Sequence(
+            name="parking", steps=[looked, looked, clicked, looked],
+            settings=settings))
+        runner.run(max_cycles=1)
+    finally:
+        mouse_mod.move_to = original
+
+    problems = []
+    # One click, so one park - plus the settle nudge, which is two more moves
+    # at the same place.
+    trips = [spot for spot in parked if spot != (100, 200)]
+    inside = [spot for spot in trips
+              if 900 <= spot[0] < 910 and 500 <= spot[1] < 510]
+    print(f"Parking after   : 4 steps, 1 of them clicking -> {len(inside)} "
+          "move(s) to the parking spot")
+    if not inside:
+        problems.append("clicking did not park at all")
+    if len(inside) > 3:
+        problems.append(f"parked {len(inside)} times for one click - the steps "
+                        "that only looked are parking too")
     return problems
 
 

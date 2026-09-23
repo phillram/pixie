@@ -32,6 +32,15 @@ Every pause can be a range rather than a fixed number, so the timing varies.
 Steps, sections and whole cycles each get their own, so you can have a delay
 between clicks and none at all between screens.
 
+**Pausing and parking only happen after a step that did something.** Both exist
+to deal with the aftermath of an action: the application needs a moment to
+react, and the cursor needs moving off whatever it just clicked. A step that
+only looked at the screen has neither - nothing was clicked, and there is
+nothing to react to. In a loop of seven steps where two of them click, skipping
+the other five saves more time than every timeout in the loop put together. A
+step with its own pause still takes it, because that was asked for
+deliberately.
+
 ## Requirements
 
 Python 3.10 or newer, and Windows. The GUI uses tkinter, which ships with

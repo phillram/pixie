@@ -234,7 +234,13 @@ class Sequence:
         for index, step in enumerate(self.steps):
             if step_defs.indent_of(step) or step.get("type") in step_defs.MARKERS:
                 continue
+            # A step you have switched off is not doing anything wrong.
+            if not step.get("enabled", True):
+                continue
             first, after = step_defs.block_of(self.steps, index)
+            # ...and nor are the ones under it that are switched off.
+            first, after = first, first + sum(
+                1 for s in self.steps[first:after] if s.get("enabled", True))
             guards = step.get("on_timeout") == "skip_block"
             name = step.get("name") or step.get("type")
             if after > first and not guards:
@@ -305,6 +311,11 @@ class Engine:
         self.last_clipped = ""
         # Where the last 'Go somewhere else' step asked to go.
         self.jump_to = "next_section"
+        # Whether the step that just ran actually did something to the
+        # application, rather than only looking at it. Parking and pausing
+        # both exist to deal with the aftermath of an action, and a step that
+        # only looked has no aftermath.
+        self.acted = False
 
     # -- plumbing --------------------------------------------------------
 
@@ -404,6 +415,10 @@ class Engine:
         suffix = "  [dry run]" if self.dry_run else ""
         verb = "double-click" if clicks == 2 else f"{clicks}x click" if clicks > 1 else "click"
         self.log(f"    {verb} {what} at {x}, {y}{suffix}")
+        # Noted here rather than declared per step type, because this is the
+        # only place in the engine that moves the pointer -- so the note
+        # cannot drift out of step with what actually happened.
+        self.acted = True
         if not self.dry_run:
             mouse.click(x, y, button=button, clicks=clicks)
 
@@ -823,6 +838,7 @@ class Engine:
         self.log(f"    press {key}{times}{suffix}")
         if not self.dry_run:
             keyboard.press(key, presses, float(step.get("interval", 0.08)))
+        self.acted = True
         return "ok"
 
     # Markers. run_cycle skips these outright; these exist so that every
@@ -881,7 +897,7 @@ class Engine:
         return f"{how} somewhere in the {width}x{height} box at {left}, {top}"
 
     def _park_mouse(self) -> None:
-        """Move the cursor out of the way so it can't sit over the next target."""
+        """Move the cursor off whatever it just clicked."""
         target = self._park_target()
         if target is None or self.dry_run:
             return
@@ -1004,10 +1020,17 @@ class Engine:
             ran_here += 1
             outcome = self.run_step(step)
             if outcome == "ok":
-                self._park_mouse()
-                # Most applications need a moment to react before the next step
-                # looks at the screen or types into it.
-                self._sleep(self._pause_after(step))
+                # Parking and pausing are both about the aftermath of doing
+                # something. A step that only looked at the screen has none:
+                # nothing was clicked to move off, and the application has
+                # nothing to react to. In a loop of seven steps where two of
+                # them click, skipping the other five saves more time than
+                # every timeout in the loop put together.
+                acted, self.acted = self.acted, False
+                if acted:
+                    self._park_mouse()
+                if acted or step.get("pause"):
+                    self._sleep(self._pause_after(step))
                 index += 1
                 continue
 
@@ -1114,7 +1137,7 @@ class Engine:
         if self.dry_run:
             self.log("DRY RUN - detecting and logging only, nothing will be clicked.", "warn")
         if self._park_target():
-            self.log(f"Cursor {self._park_description()} after each step."
+            self.log(f"Cursor {self._park_description()} after each click."
                      + ("  [not in dry run]" if self.dry_run else ""), "muted")
 
         reason = "stopped"
