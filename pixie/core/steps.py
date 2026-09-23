@@ -193,6 +193,19 @@ _SPECK_HINT = (
     "Set this between the two - 100 is a good start - and the noise is gone "
     "before joining can rescue it. 0 keeps every piece."
 )
+_JOIN_ACROSS_HINT = (
+    "The same thing, but sideways - and it usually wants to be much smaller, "
+    "or zero.\n"
+    "What breaks an outline up and what sits next to it are different things. "
+    "A card overlapped by its neighbour shows a top bar with slivers of its "
+    "sides below: pieces stacked above one another, so the reach they need is "
+    "upward. Anything else on screen glowing the same color - a lamp, a lit "
+    "prop, a beam - is *beside* the thing you want, and every pixel of "
+    "sideways reach is an invitation to it.\n"
+    "Start at 0. The two sides of one outline are a card's width apart and "
+    "were never going to join sideways anyway; they join through the bar "
+    "above them."
+)
 _SIZE_HINT = (
     "Ignore anything smaller than this. Two numbers, because the thing that "
     "catches people out is a background which happens to share the color: a "
@@ -401,8 +414,10 @@ STEP_TYPES: dict[str, StepType] = {
                        "matching pixels elsewhere don't count."),
             Field("min_piece", "integer", "Ignore pieces smaller than (px)", 0,
                   minimum=0, maximum=100000, hint=_SPECK_HINT),
-            Field("join", "integer", "Join pieces within (px)", 0,
+            Field("join", "integer", "Join pieces up and down (px)", 0,
                   minimum=0, maximum=400, hint=_JOIN_HINT),
+            Field("join_across", "integer", "Join pieces side to side (px)", 0,
+                  minimum=0, maximum=400, hint=_JOIN_ACROSS_HINT),
             Field("min_width", "integer", "Patch at least this wide (px)", 0,
                   minimum=0, maximum=4000, hint=_SIZE_HINT),
             Field("min_height", "integer", "Patch at least this tall (px)", 0,
@@ -438,8 +453,10 @@ STEP_TYPES: dict[str, StepType] = {
                   hint="Ignore patches smaller than this, so a few stray matching pixels elsewhere don't count as a find."),
             Field("min_piece", "integer", "Ignore pieces smaller than (px)", 0,
                   minimum=0, maximum=100000, hint=_SPECK_HINT),
-            Field("join", "integer", "Join pieces within (px)", 0,
+            Field("join", "integer", "Join pieces up and down (px)", 0,
                   minimum=0, maximum=400, hint=_JOIN_HINT),
+            Field("join_across", "integer", "Join pieces side to side (px)", 0,
+                  minimum=0, maximum=400, hint=_JOIN_ACROSS_HINT),
             Field("min_width", "integer", "Patch at least this wide (px)", 0,
                   minimum=0, maximum=4000, hint=_SIZE_HINT),
             Field("min_height", "integer", "Patch at least this tall (px)", 0,

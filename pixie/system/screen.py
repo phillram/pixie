@@ -262,6 +262,7 @@ def _search(
     min_width: int = 0,
     min_height: int = 0,
     min_piece: int = 0,
+    join_across: int | None = None,
 ) -> tuple[list[ColorHit], list[tuple[ColorHit, str]], np.ndarray]:
     """Everything the search knows: what passed, what did not and why, and the mask.
 
@@ -324,10 +325,18 @@ def _search(
     # fattened copy of the mask, which bridges gaps up to `join` pixels, while
     # the box each group reports is measured from the real pixels -- so
     # joining changes what counts as one thing, not where that thing is.
+    # Up and down and side to side are separate distances, because what breaks
+    # an outline up and what sits next to it are different things. A card in a
+    # fan is overlapped by its neighbour, so its outline arrives as a top bar
+    # with slivers of its sides below -- pieces stacked above one another,
+    # needing a generous reach *upward*. Anything else glowing the same color
+    # is beside it. A square reach cannot tell those apart, and every pixel of
+    # sideways reach is an invitation to the background.
+    across = join if join_across is None else int(join_across)
     grouping = mask
-    if join > 0:
-        span = int(join) * 2 + 1
-        grouping = cv2.dilate(mask, np.ones((span, span), np.uint8))
+    if join > 0 or across > 0:
+        grouping = cv2.dilate(mask, np.ones((int(join) * 2 + 1,
+                                             across * 2 + 1), np.uint8))
 
     count, labels, stats, _ = cv2.connectedComponentsWithStats(
         grouping, connectivity=8)
@@ -439,11 +448,12 @@ def find_colors(
     min_width: int = 0,
     min_height: int = 0,
     min_piece: int = 0,
+    join_across: int | None = None,
 ) -> list[ColorHit]:
     """Every patch of `target_rgb` inside `region`, in the order asked for."""
     return _search(region, target_rgb, tolerance, min_pixels, match,
                    min_saturation, min_brightness, order, join,
-                   min_width, min_height, min_piece)[0]
+                   min_width, min_height, min_piece, join_across)[0]
 
 
 @dataclass(frozen=True)
@@ -609,6 +619,7 @@ def explain_colors(
     min_width: int = 0,
     min_height: int = 0,
     min_piece: int = 0,
+    join_across: int | None = None,
 ) -> tuple[np.ndarray, list[tuple[ColorHit, str]], list[tuple[ColorHit, str]]]:
     """A picture of what matched, plus the patches kept and the ones dropped.
 
@@ -619,7 +630,8 @@ def explain_colors(
     """
     kept, dropped, mask = _search(region, target_rgb, tolerance, min_pixels,
                                   match, min_saturation, min_brightness, order,
-                                  join, min_width, min_height, min_piece)
+                                  join, min_width, min_height, min_piece,
+                                  join_across)
 
     picture = grab(region).copy()
     # How saturated each patch actually is. This is the number that separates
@@ -673,11 +685,12 @@ def find_color(
     min_width: int = 0,
     min_height: int = 0,
     min_piece: int = 0,
+    join_across: int | None = None,
 ) -> ColorHit | None:
     """The one patch of `target_rgb` that `order` puts first. See find_colors."""
     hits = find_colors(region, target_rgb, tolerance, min_pixels, match,
                        min_saturation, min_brightness, order, join,
-                       min_width, min_height, min_piece)
+                       min_width, min_height, min_piece, join_across)
     return hits[0] if hits else None
 
 

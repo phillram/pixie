@@ -395,6 +395,36 @@ rescue it.
 | 0 | 700x240, 40 pieces - specks and outline as one, leftmost is a speck |
 | 100 | 360x240, 1 piece - the outline alone |
 
+### Up and down is not sideways
+
+Joining reached the same distance in every direction, and that is the wrong
+shape for the problem. **What breaks an outline up and what sits next to it
+are different things.**
+
+A card overlapped by its neighbour shows a top bar with slivers of its sides
+below it - pieces stacked above one another, needing a generous reach upward.
+Anything else on screen glowing the same color is *beside* it: a lamp, a lit
+prop, a beam. Every pixel of sideways reach is an invitation to those.
+
+So the two are separate settings. From a real hand, with a lit bottle in the
+background 40px clear of a card:
+
+| Reach | Result |
+| --- | --- |
+| 40 both ways | one 560x310 patch starting at the bottle - and `leftmost` with a left-edge anchor then clicks the bottle |
+| 40 up and down, 0 sideways | two patches: the bottle alone, and the card's outline whole at 480x290 |
+
+The outline still comes together, because its slivers join through the bar
+above them rather than across to each other - the two sides of one card are a
+card's width apart and were never going to join sideways anyway.
+
+**Start `Join pieces side to side` at 0.** Raise it only if you can see, in
+What matches?, a real piece of your target that is not connecting any other
+way.
+
+A sequence saved before this setting existed inherits the old distance in both
+directions, so it behaves exactly as it did until you change it.
+
 ### What joining costs when the intruder is real
 
 Joining sweeps up *anything* of the same color within reach, not only pieces
@@ -527,7 +557,8 @@ Work in this order, because each step depends on the one before:
 
 1. **Min saturation** until only the thing you want is tinted
 2. **Ignore pieces smaller than** to clear the speckle left behind
-3. **Join pieces within** to pull that thing's fragments together
+3. **Join pieces up and down** to pull that thing's fragments together,
+   leaving **side to side** at 0 unless something genuinely needs it
 4. **Patch at least this wide / tall** to drop any streaks that survive
 5. **If several match** to choose between the real candidates
 

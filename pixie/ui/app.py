@@ -2153,6 +2153,7 @@ class App:
                 min_brightness=int(self._setting(step, "min_brightness")),
                 order=self._setting(step, "pick"),
                 join=int(self._setting(step, "join")),
+                join_across=int(self._setting(step, "join_across")),
                 min_width=int(self._setting(step, "min_width")),
                 min_height=int(self._setting(step, "min_height")),
                 min_piece=int(self._setting(step, "min_piece")),

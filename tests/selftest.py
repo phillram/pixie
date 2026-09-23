@@ -115,6 +115,7 @@ def main() -> int:
     failures.extend(_check_a_speck_swept_up_by_the_join())
     failures.extend(_check_the_shape_split_is_suggested())
     failures.extend(_check_specks_are_dropped_before_joining())
+    failures.extend(_check_joining_sideways_is_its_own_distance())
     failures.extend(_check_a_section_with_nothing_switched_on())
     failures.extend(_check_every_wait_respects_the_cap())
     failures.extend(_check_declared_defaults())
@@ -913,6 +914,86 @@ def _check_a_mostly_hidden_outline() -> list[str]:
     if any(piece.height >= 90 for piece in in_pieces):
         print(f"                  (tallest loose piece "
               f"{max(p.height for p in in_pieces)}px)")
+    return problems
+
+
+def _check_joining_sideways_is_its_own_distance() -> list[str]:
+    """Reaching up must not mean reaching sideways by the same amount.
+
+    An outline broken by an overlapping neighbour arrives as a top bar with
+    slivers of its sides below it: pieces stacked *above one another*. Anything
+    else glowing the same color is *beside* it. A square reach cannot tell
+    those apart, so the reach a broken outline needs is exactly the reach that
+    lets a lit prop 40px to the left take over the patch - and with it the left
+    edge, which is what the click aims at.
+
+    The numbers are from a real hand: a lit bottle in the background about 40px
+    clear of a card's outline, pulled in by a join of 40.
+    """
+    from pixie.system import screen as screen_mod
+
+    def hsv(h, s, v):
+        return tuple(int(c) for c in cv2.cvtColor(
+            np.array([[[h, s, v]]], dtype=np.uint8), cv2.COLOR_HSV2BGR)[0, 0])
+
+    glow = hsv(90, 250, 250)
+    frame = np.zeros((313, 1600, 3), dtype=np.uint8)
+    # A lit prop in the background: beside the cards, overlapping them in
+    # height, and 40px clear of the nearest one.
+    frame[0:50, 460:500] = glow
+    # A card whose outline is broken the way a fan breaks it: a top bar, then
+    # a 57px gap, then slivers of its two sides.
+    frame[20:125, 540:1020] = glow
+    frame[182:310, 540:556] = glow
+    frame[182:310, 1004:1020] = glow
+
+    original = screen_mod.grab
+    screen_mod.grab = lambda _region=None: frame
+    try:
+        common = dict(region=(0, 0, 1600, 313), target_rgb=(37, 254, 254),
+                      tolerance=14, min_pixels=39, match="hue",
+                      order="leftmost", join=40)
+        square = screen_mod.find_colors(**common)
+        upright = screen_mod.find_colors(join_across=0, **common)
+        filtered = screen_mod.find_colors(join_across=0, min_width=200, **common)
+    finally:
+        screen_mod.grab = original
+
+    problems = []
+    print(f"Sideways join   : square reach -> {len(square)} patch "
+          f"{square[0].width}x{square[0].height} at {square[0].left}; "
+          f"upright only -> {len(upright)} patches")
+
+    # The old behaviour, which is what a sequence saved before this still gets.
+    if len(square) != 1 or square[0].left != 460:
+        problems.append(f"a square reach gave {[(h.left, h.width) for h in square]}"
+                        ", expected one patch starting at the prop (460)")
+    # With no sideways reach the prop stands alone, and the outline still
+    # comes together through the bar above its slivers.
+    if len(upright) != 2:
+        problems.append(f"an upright-only reach gave {len(upright)} patches, "
+                        "expected the prop and the outline separately")
+        return problems
+    card = [hit for hit in upright if hit.left == 540]
+    if not card:
+        problems.append(f"the outline did not come together: "
+                        f"{[(h.left, h.width, h.height) for h in upright]}")
+    elif card[0].width < 470 or card[0].height < 280:
+        problems.append(f"the outline came out {card[0].width}x{card[0].height}, "
+                        "so its pieces did not all join up the way they should")
+    # And the prop, alone, is nothing like card-shaped.
+    if len(filtered) != 1 or filtered[0].left != 540:
+        problems.append(f"a width limit did not leave just the card: "
+                        f"{[(h.left, h.width) for h in filtered]}")
+    else:
+        print(f"                  card survives {filtered[0].width}x"
+              f"{filtered[0].height} at {filtered[0].left}, prop dropped")
+
+    # A file saved before this setting existed must behave exactly as it did.
+    older = engine_mod.Sequence._migrate([{"type": "wait_for_color_in_area",
+                                           "join": 40}])
+    if older[0].get("join_across") != 40:
+        problems.append(f"an older file did not inherit its join sideways: {older}")
     return problems
 
 

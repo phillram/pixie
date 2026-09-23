@@ -143,6 +143,12 @@ class Sequence:
             for old, new in cls.RENAMED_FIELDS.items():
                 if old in step:
                     step[new] = step.pop(old)
+            # Joining used to reach the same distance in every direction. Now
+            # that sideways is its own setting, a sequence saved before it
+            # existed inherits the old distance and goes on behaving exactly
+            # as it did - the new, tighter default is for new steps only.
+            if "join" in step and "join_across" not in step:
+                step["join_across"] = step["join"]
         return steps
 
     def save(self, path: str | Path | None = None) -> Path:
@@ -493,6 +499,7 @@ class Engine:
             min_brightness=int(self._value(step, "min_brightness", 70)),
             order=self._value(step, "pick", "largest"),
             join=int(self._value(step, "join", 0)),
+            join_across=int(self._value(step, "join_across", 0)),
             min_width=int(self._value(step, "min_width", 0)),
             min_height=int(self._value(step, "min_height", 0)),
             min_piece=int(self._value(step, "min_piece", 0)),
