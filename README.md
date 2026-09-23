@@ -353,6 +353,13 @@ Set `Min saturation` between them - 180 here - and look again. Now it reads:
 
 One patch, the outline alone, centred on the card.
 
+A size filter is the **last** thing to set, and set it against what a badly
+covered target looks like, not a clean one. A card in the middle of a fan
+shows only its top bar and two slivers of its sides - the rest is behind its
+neighbours - so a minimum height picked from a fully visible card will throw
+it away entirely. Get the join right first, so the pieces are one shape, then
+measure.
+
 Work in this order, because each step depends on the one before:
 
 1. **Min saturation** until only the thing you want is tinted

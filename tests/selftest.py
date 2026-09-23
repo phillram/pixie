@@ -110,6 +110,7 @@ def main() -> int:
     failures.extend(_check_background_of_the_same_color())
     failures.extend(_check_aiming_at_an_edge())
     failures.extend(_check_edges_follow_the_shape())
+    failures.extend(_check_a_mostly_hidden_outline())
     failures.extend(_check_every_wait_respects_the_cap())
     failures.extend(_check_declared_defaults())
     failures.extend(_check_click_box())
@@ -764,6 +765,65 @@ def _check_edges_follow_the_shape() -> list[str]:
     # A template match is a rectangle, so it has nothing to follow and says so.
     if runner._edges_of(screen.Match(10, 20, 30, 40, 1.0)) is not None:
         problems.append("an image match claimed to know where its shape is")
+    return problems
+
+
+def _check_a_mostly_hidden_outline() -> list[str]:
+    """A glow that is mostly covered must still be found as one thing.
+
+    A card in the middle of a fan shows only its top bar and two slivers of
+    its side borders; the rest is behind its neighbours. Those pieces have a
+    gap between them, and if the join does not bridge that gap they stay
+    separate - three short pieces instead of one tall outline, which then
+    fall foul of any minimum height and vanish entirely.
+    """
+    from pixie.system import screen as screen_mod
+
+    def hsv(h, s, v):
+        return tuple(int(c) for c in cv2.cvtColor(
+            np.array([[[h, s, v]]], dtype=np.uint8), cv2.COLOR_HSV2BGR)[0, 0])
+
+    # The exact shape from a real hand: a 772x105 top bar, then a 57px gap,
+    # then two slivers running down to the bottom.
+    frame = np.zeros((320, 1000, 3), dtype=np.uint8)
+    glow = hsv(90, 250, 250)
+    frame[30:135, 40:812] = glow        # top bar
+    frame[192:320, 31:45] = glow        # left sliver, after a 57px gap
+    frame[197:320, 372:395] = glow      # right sliver
+
+    original = screen_mod.grab
+    screen_mod.grab = lambda _region=None: frame
+    try:
+        common = dict(region=(0, 0, 1000, 320), target_rgb=(37, 254, 254),
+                      tolerance=14, min_pixels=39, match="hue", order="leftmost")
+        in_pieces = screen_mod.find_colors(join=25, **common)
+        joined = screen_mod.find_colors(join=40, **common)
+        filtered = screen_mod.find_colors(join=40, min_height=90, **common)
+    finally:
+        screen_mod.grab = original
+
+    problems = []
+    print(f"Hidden outline  : {len(in_pieces)} pieces at join 25, "
+          f"{len(joined)} at join 40")
+
+    if len(in_pieces) < 2:
+        problems.append("the pieces joined up at 25 anyway, so the gap this "
+                        "test is about is not being reproduced")
+    if len(joined) != 1:
+        problems.append(f"join 40 gave {len(joined)} patches, expected the "
+                        "pieces to become one outline")
+        return problems
+    if joined[0].height < 250:
+        problems.append(f"the joined outline is only {joined[0].height}px tall, "
+                        "so the pieces did not all come together")
+    # And a height filter must not then throw the whole thing away.
+    if not filtered:
+        problems.append("a minimum height dropped the joined outline")
+    # Each piece on its own is short enough that the filter would have killed
+    # it, which is exactly how this went wrong.
+    if any(piece.height >= 90 for piece in in_pieces):
+        print(f"                  (tallest loose piece "
+              f"{max(p.height for p in in_pieces)}px)")
     return problems
 
 
