@@ -78,6 +78,19 @@ def main() -> int:
 
     print(f"  {len(kinds)} field kinds, all with an editor")
 
+    # The standalone tools are not imported by the app, so nothing else would
+    # notice if one stopped parsing.
+    import ast
+    from pathlib import Path
+
+    tools = sorted(Path(__file__).parent.glob("*.py"))
+    for tool in tools:
+        try:
+            ast.parse(tool.read_text(encoding="utf-8"))
+        except SyntaxError as error:
+            problems.append(f"tools/{tool.name} does not parse: {error}")
+    print(f"  {len(tools)} tools parse")
+
     # Every value a dropdown can hold needs plain English to show for it, and
     # the engine has to know what to do with every 'if not found' option.
     for step_type in steps.STEP_TYPES.values():

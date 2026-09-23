@@ -1209,9 +1209,26 @@ class App:
         var = tk.StringVar(value=self._color_text(value))
         ttk.Entry(holder, textvariable=var, state="readonly").grid(row=0, column=1, sticky="ew")
 
-        ttk.Button(self.editor, text="Pick...", style="Tool.TButton",
-                   command=lambda: self._capture_color(step, spec, var, swatch)).grid(
-            row=row, column=2, sticky="w", padx=(8, 0))
+        buttons = ttk.Frame(self.editor, style="Panel.TFrame")
+        buttons.grid(row=row, column=2, sticky="w", padx=(8, 0))
+        ttk.Button(buttons, text="Pick...", style="Tool.TButton",
+                   command=lambda: self._capture_color(step, spec, var,
+                                                       swatch)).pack(side="left")
+        # A glow has no single color: washed out at the edges, near white in
+        # the middle. Whichever pixel you happen to hit decides everything, so
+        # offer to look at a whole area instead.
+        step_type = step_defs.STEP_TYPES.get(step.get("type", ""))
+        if step_type and "match" in step_type.field_map():
+            sample = ttk.Button(buttons, text="Sample an area...",
+                                style="Tool.TButton",
+                                command=lambda: self._sample_color(step))
+            sample.pack(side="left", padx=(6, 0))
+            theme.tip(sample,
+                      "Drag a box over the thing you want detected and Pixie "
+                      "works out the color, the tolerance and the saturation "
+                      "and brightness floors from what is actually there.\n\n"
+                      "Far better than picking one pixel out of a glow, which "
+                      "is how you end up matching its palest edge.")
         self.field_vars[spec.key] = var
 
     @staticmethod
@@ -1612,6 +1629,43 @@ class App:
             if "pos" in self.field_vars:
                 self.field_vars["pos"].set(f"{x}, {y}")
             self.log(f"Also set this step's watch position to {x}, {y}", "muted")
+
+    def _sample_color(self, step: dict[str, Any]) -> None:
+        """Drag a box, and take the color settings from what is in it."""
+        picker = self._pick("area")
+        if picker is None or picker.result is None:
+            return
+        x, y, width, height = picker.result
+        advice = screen.suggest_color(picker.frame[y : y + height, x : x + width])
+        if advice is None:
+            self.log("There is no real color in that box - it is gray, white "
+                     "or black. Hue matching cannot work on it; pick the color "
+                     "directly and switch 'Match the color by' to RGB.", "warn")
+            return
+
+        for key, value in (("color", list(advice.rgb)),
+                           ("match", "hue"),
+                           ("tolerance", advice.tolerance),
+                           ("min_saturation", advice.min_saturation),
+                           ("min_brightness", advice.min_brightness)):
+            if key in step:
+                step[key] = value
+        self.mark_dirty()
+        self._refresh_row(self.selected)
+        # The numbers changed under several widgets at once, so redraw them.
+        self.root.after_idle(self.build_editor)
+
+        self.log(f"Sampled {width}x{height}: {advice.hue_degrees} degree hue, "
+                 f"{advice.share:.0%} of the color in there agrees.", "good")
+        self.log(f"   color RGB{advice.rgb}, tolerance {advice.tolerance}, "
+                 f"min saturation {advice.min_saturation}, min brightness "
+                 f"{advice.min_brightness}", "muted")
+        self.log(f"   these match {advice.matched:,} of the {advice.total:,} "
+                 f"pixels you dragged over ({advice.matched / advice.total:.0%}). "
+                 f"Press 'What matches?' to see it on the real screen.", "muted")
+        if not advice.hue_beats_rgb:
+            self.log("   that color is flat enough that RGB matching would do "
+                     "just as well.", "muted")
 
     def _capture_region(self, step: dict[str, Any], spec: step_defs.Field,
                         var: tk.StringVar, _boxes: Any = None) -> None:

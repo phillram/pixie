@@ -415,6 +415,66 @@ def find_colors(
                    min_width, min_height)[0]
 
 
+@dataclass(frozen=True)
+class ColorAdvice:
+    """Settings worked out from a patch of screen, and how well they fit."""
+
+    rgb: tuple[int, int, int]
+    tolerance: int
+    min_saturation: int
+    min_brightness: int
+    hue_degrees: int          # the dominant hue, in degrees
+    share: float              # how much of the colored area shares that hue
+    matched: int              # pixels these settings would match
+    total: int                # pixels in the patch
+    hue_beats_rgb: bool
+
+
+def suggest_color(patch: np.ndarray) -> ColorAdvice | None:
+    """Work out hue settings for whatever is in `patch`.
+
+    One pixel is a terrible sample of a glow: its edges are washed out and its
+    core is nearly white, so whichever pixel you happen to hit decides
+    everything. Looking at a whole area instead gives the shade that is really
+    there, and how far the pixels stray from it.
+
+    Returns None when there is no usable color in the patch -- it is all gray,
+    white or black, and hue has no meaning.
+    """
+    hsv = cv2.cvtColor(patch, cv2.COLOR_BGR2HSV)
+    hue, saturation, value = hsv[:, :, 0], hsv[:, :, 1], hsv[:, :, 2]
+
+    # Only colored pixels have a meaningful hue; gray and near-black don't.
+    colored = (saturation >= 60) & (value >= 50)
+    if int(colored.sum()) < 20:
+        return None
+
+    hues = hue[colored]
+    counts = np.bincount(hues.ravel(), minlength=180)
+    dominant = int(counts.argmax())
+    spread = np.minimum(np.abs(hues.astype(np.int16) - dominant),
+                        180 - np.abs(hues.astype(np.int16) - dominant))
+    share = float((spread <= 7).mean())
+    tolerance = max(8, min(40, (int(np.percentile(spread, 90)) + 2) * 2))
+
+    sats, vals = saturation[colored], value[colored]
+    min_saturation = max(30, int(np.percentile(sats, 10)) - 15)
+    min_brightness = max(30, int(np.percentile(vals, 10)) - 15)
+
+    # A representative color: the middle of the pixels near the dominant hue.
+    near = colored & (np.minimum(np.abs(hue.astype(np.int16) - dominant),
+                                 180 - np.abs(hue.astype(np.int16) - dominant)) <= 7)
+    rgb = tuple(int(v) for v in np.median(cv2.cvtColor(patch, cv2.COLOR_BGR2RGB)[near],
+                                          axis=0))
+
+    matched = int(_hue_mask(patch, rgb, tolerance, min_saturation,
+                            min_brightness).sum())
+    by_rgb = int(_rgb_mask(patch, rgb, 50).sum())
+    return ColorAdvice(rgb, tolerance, min_saturation, min_brightness,
+                       dominant * 2, share, matched,
+                       patch.shape[0] * patch.shape[1], matched > by_rgb)
+
+
 def picture_around(x: int, y: int, width: int = 900,
                    height: int = 560) -> tuple[np.ndarray, Region]:
     """A screenshot centered on a point, kept inside the desktop.

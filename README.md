@@ -328,6 +328,21 @@ test where a washed-out streak crosses a card outline:
 the same hue is usually washed out towards white or grey. `Min saturation`
 throws away the washed-out pixels before anything else happens.
 
+### Sampling a color properly
+
+One pixel is a poor sample of a glow. Its edges are washed out and its middle
+is nearly white, so whichever pixel you happen to land on decides everything -
+land on the pale fringe and the step will never match the thing you meant.
+
+`Sample an area...`, beside the color picker, drags a box instead and works
+the settings out from what is in it: the color, the tolerance, and the
+saturation and brightness floors. It reports how much of what you dragged over
+those settings would match, and tells you when the color is flat enough that
+RGB matching would do just as well.
+
+`python tools/tune_color.py` does the same from a terminal, using the same
+code, for when you want the numbers without opening the window.
+
 ### Finding the number
 
 Guessing at it is miserable, so press **What matches?** next to Test this
