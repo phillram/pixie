@@ -498,6 +498,10 @@ longer than that. The log says so when the section starts:
 A sequence with no dividers is treated as one section covering everything, which
 behaves exactly as it did before sections existed.
 
+Switching off every step in a section leaves nothing to run and nothing to end
+it, so Pixie says so before the run starts and moves past it during one rather
+than going round it forever in silence.
+
 ## Starting and stopping it
 
 F9 starts the run and stops it again. It works while the application you are

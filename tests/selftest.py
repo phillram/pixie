@@ -111,6 +111,7 @@ def main() -> int:
     failures.extend(_check_aiming_at_an_edge())
     failures.extend(_check_edges_follow_the_shape())
     failures.extend(_check_a_mostly_hidden_outline())
+    failures.extend(_check_a_section_with_nothing_switched_on())
     failures.extend(_check_every_wait_respects_the_cap())
     failures.extend(_check_declared_defaults())
     failures.extend(_check_click_box())
@@ -824,6 +825,67 @@ def _check_a_mostly_hidden_outline() -> list[str]:
     if any(piece.height >= 90 for piece in in_pieces):
         print(f"                  (tallest loose piece "
               f"{max(p.height for p in in_pieces)}px)")
+    return problems
+
+
+def _check_a_section_with_nothing_switched_on() -> list[str]:
+    """A section whose steps are all off must not spin forever.
+
+    Nothing runs, so nothing fails, so nothing ever triggers the move to the
+    next section - the engine just went round that section for ever, printing
+    nothing. Switching off the last steps of a sequence is an ordinary thing
+    to do, and it should not hang.
+    """
+    ran: list[str] = []
+
+    class Counting(engine_mod.Engine):
+        def run_step(self, step):
+            ran.append(step.get("name"))
+            if len(ran) > 20:
+                raise engine_mod.Aborted("this should never be reached")
+            # Fails, so the first section hands over to the empty one, which
+            # is the thing being tested.
+            return "timeout"
+
+    steps = [
+        {"type": "section", "name": "Does things", "enabled": True},
+        {"type": "press_key", "name": "work", "enabled": True, "key": "Q",
+         "on_timeout": "next_section", "pause": [0, 0]},
+        {"type": "section", "name": "Switched off", "enabled": True},
+        {"type": "press_key", "name": "never", "enabled": False, "key": "Q"},
+    ]
+    sequence = engine_mod.Sequence(
+        name="empty", steps=steps,
+        settings=engine_mod.Settings(step_pause_min=0, step_pause_max=0,
+                                     section_pause_min=0, section_pause_max=0,
+                                     cycle_pause_min=0, cycle_pause_max=0,
+                                     failsafe_corner=False))
+
+    messages: list[str] = []
+    runner = Counting(sequence, emit=lambda e: messages.append(e.get("message", "")),
+                      dry_run=True)
+    runner.run(max_cycles=1)
+
+    problems = []
+    print(f"Empty section   : finished after running {ran}, "
+          f"{runner.cycles_completed} cycle(s)")
+    if runner.cycles_completed != 1:
+        problems.append(f"the run did not finish cleanly: "
+                        f"{runner.cycles_completed} cycles")
+    if "never" in ran:
+        problems.append("a switched-off step was run")
+    if not any("nothing in 'Switched off' is switched on" in m for m in messages):
+        problems.append("it did not say why it moved on")
+
+    # And it should be said up front, before the run starts.
+    complaints = sequence.warnings()
+    if not any("Switched off" in c for c in complaints):
+        problems.append(f"the empty section was not warned about: {complaints}")
+
+    # A section with steps in it must not be flagged.
+    fine = engine_mod.Sequence(name="fine", steps=steps[:2])
+    if any("no steps switched on" in c for c in fine.warnings()):
+        problems.append(f"a perfectly good section was flagged: {fine.warnings()}")
     return problems
 
 

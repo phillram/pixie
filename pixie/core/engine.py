@@ -164,12 +164,28 @@ class Sequence:
         active = [s for s in self.steps if s.get("enabled", True)]
         if not any(s.get("type") == "section" for s in active):
             return []
+
+        found = []
         if not any(s.get("on_timeout") == "next_section" for s in active):
-            return ["This sequence has sections, but no step is set to "
-                    f"'{step_defs.ON_TIMEOUT_LABELS['next_section']}' - so the "
-                    "first section will repeat forever and the others will "
-                    "never run."]
-        return []
+            found.append(
+                "This sequence has sections, but no step is set to "
+                f"'{step_defs.ON_TIMEOUT_LABELS['next_section']}' - so the "
+                "first section will repeat forever and the others will "
+                "never run.")
+
+        # A section with everything switched off does nothing, forever, and
+        # says nothing while doing it.
+        starts = step_defs.section_starts(self.steps)
+        for position, start in enumerate(starts):
+            end = starts[position + 1] if position + 1 < len(starts) else len(self.steps)
+            body = [s for s in self.steps[start:end]
+                    if s.get("enabled", True)
+                    and s.get("type") not in step_defs.MARKERS]
+            if not body:
+                where = self.steps[start].get("name") or "the first section"
+                found.append(f"Section '{where}' has no steps switched on. "
+                             "Delete the divider, or switch a step back on.")
+        return found
 
     def problems(self) -> list[str]:
         active = [s for s in self.steps if s.get("enabled", True)]
@@ -754,6 +770,7 @@ class Engine:
         numbers = step_defs.display_numbers(self.sequence.steps)
         current = 0
         index = sections[0][0]
+        ran_here = 0
         self._enter_section(sections[current])
         self._announce_section(sections[current])
 
@@ -763,9 +780,21 @@ class Engine:
             if index >= end:
                 if not sectioned:
                     return "ok"
+                if not ran_here:
+                    # Every step in here is switched off. Repeating it would
+                    # spin forever with nothing to show for it, and nothing in
+                    # the log either, which looks exactly like a hang.
+                    self.log(f"    nothing in '{name}' is switched on, so there "
+                             "is nothing to repeat - moving on", "error")
+                    moved = self._hand_over(sections, current, name)
+                    if moved is None:
+                        return "ok"
+                    current, index, ran_here = *moved, 0
+                    continue
                 # Fell off the end of the section: run it again from its top.
                 self.log(f"  -- repeating section '{name}'", "muted")
                 index = start
+                ran_here = 0
                 self._sleep(self._section_pause(sections[current]))
                 continue
 
@@ -778,6 +807,7 @@ class Engine:
             self.emit({"kind": "step", "index": index, "step": step})
             self.log(f"  {numbers[index]}. {step.get('name') or step['type']}")
 
+            ran_here += 1
             outcome = self.run_step(step)
             if outcome == "ok":
                 self._park_mouse()
@@ -809,25 +839,37 @@ class Engine:
             if on_timeout == "restart_section":
                 self.log(f"    back to the first step of '{name}'", "warn")
                 index = start
+                ran_here = 0
                 self._sleep(self._section_pause(sections[current]))
                 continue
             if on_timeout == "next_section":
-                current += 1
-                if current >= len(sections):
-                    self.log("    that was the last section - back to the top",
-                             "warn")
+                moved = self._hand_over(sections, current, name)
+                if moved is None:
                     return "ok"
-                self.log(f"    moving on from '{name}'", "warn")
-                self._sleep(self._section_pause(sections[current - 1]))
-                index = sections[current][0]
-                self._enter_section(sections[current])
-                self._announce_section(sections[current])
+                current, index, ran_here = *moved, 0
                 continue
 
             # Unreachable: the branches above cover every value in
             # step_defs.ON_TIMEOUT, and check_wiring.py proves it by reading
             # them back out of this method.
             raise AssertionError(f"no branch for on_timeout {on_timeout!r}")
+
+    def _hand_over(self, sections: list[tuple[int, int, str]], current: int,
+                   name: str) -> tuple[int, int] | None:
+        """Leave a section for the next one.
+
+        Returns where to carry on, or None when that was the last section and
+        the cycle is therefore finished.
+        """
+        following = current + 1
+        if following >= len(sections):
+            self.log("    that was the last section - back to the top", "warn")
+            return None
+        self.log(f"    moving on from '{name}'", "warn")
+        self._sleep(self._section_pause(sections[current]))
+        self._enter_section(sections[following])
+        self._announce_section(sections[following])
+        return following, sections[following][0]
 
     def _announce_section(self, section: tuple[int, int, str]) -> None:
         if len(self.sections()) <= 1:
