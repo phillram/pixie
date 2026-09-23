@@ -9,6 +9,7 @@ session; it builds a real window but never shows it.
 
 import sys
 import tempfile
+import threading
 import tkinter as tk
 from pathlib import Path
 
@@ -955,6 +956,56 @@ def check_show_the_click():
     return problems
 
 
+def check_testing_a_step_runs_it_once():
+    """'Test this step' must run the step once, whatever 'If not found' says.
+
+    Regression test. It used to hand the step to the engine's own loop, so a
+    step set to 'go back to the first step of this section' was a section of
+    one step that retried itself forever. Testing it never came back.
+    """
+    import numpy as np
+
+    from pixie.system import screen as screen_mod
+
+    problems = []
+    original = screen_mod.grab
+    screen_mod.grab = lambda region=None: np.zeros(
+        (region[3] if region else 600, region[2] if region else 800, 3),
+        dtype=np.uint8)
+    try:
+        # A color that is nowhere on a black screen, so the step always fails.
+        for on_timeout in step_defs.ON_TIMEOUT:
+            step = dict(step_defs.new_step("wait_for_color_in_area"),
+                        name=f"never {on_timeout}", region=[0, 0, 400, 300],
+                        color=[37, 254, 254], timeout=0.05,
+                        on_timeout=on_timeout)
+            sequence = engine_mod.Sequence(name="test", steps=[step])
+            tester = engine_mod.Engine(sequence, emit=lambda _e: None,
+                                       dry_run=True)
+            finished = []
+            tester.emit = lambda event: finished.append(event.get("kind"))
+
+            done = threading.Event()
+
+            def run():
+                gui.App._run_one(tester, step)
+                done.set()
+
+            threading.Thread(target=run, daemon=True).start()
+            if not done.wait(timeout=5.0):
+                problems.append(f"testing a step set to {on_timeout!r} did not "
+                                "come back within 5 seconds")
+                tester.stop()
+            elif "finished" not in finished:
+                problems.append(f"testing a step set to {on_timeout!r} never "
+                                "reported that it had finished")
+        print(f"Test-one-step ok: all {len(step_defs.ON_TIMEOUT)} 'if not "
+              "found' settings run once and return")
+    finally:
+        screen_mod.grab = original
+    return problems
+
+
 def check_window_size_is_remembered():
     """Maximized, and the size behind it, survive a restart and a capture."""
     import json
@@ -1255,6 +1306,7 @@ except Exception as error:  # noqa: BLE001
 
 for check in (check_boxes_can_be_typed_into, check_panes_can_be_dragged,
               check_what_matches_window, check_show_the_click,
+              check_testing_a_step_runs_it_once,
               check_window_size_is_remembered,
               check_settings_stick):
     try:

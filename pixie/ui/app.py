@@ -2140,8 +2140,39 @@ class App:
         self.run_button.configure(text="■  Stop", style="Stop.TButton")
         self.status_text.set("Testing step")
         self.log(f"Testing {where}...", "muted")
-        self.worker = threading.Thread(target=lambda: tester.run(max_cycles=1), daemon=True)
+        self.worker = threading.Thread(target=lambda: self._run_one(tester, step),
+                                       daemon=True)
         self.worker.start()
+
+    @staticmethod
+    def _run_one(tester: engine_mod.Engine, step: dict[str, Any]) -> None:
+        """Run a step exactly once and report what it did.
+
+        Deliberately not the engine's own loop. 'If not found' answers a
+        question about the sequence -- go back to this section, start over --
+        which has no meaning for one step on its own, and one of the answers
+        made testing a step retry it forever.
+        """
+        tester.emit({"kind": "started"})
+        try:
+            outcome = tester.run_step(step)
+        except engine_mod.Aborted as stop:
+            tester.emit({"kind": "finished", "reason": str(stop)})
+            return
+        except Exception as error:  # noqa: BLE001 - surface it, don't vanish
+            tester.log(f"Unexpected error: {error!r}", "error")
+            tester.emit({"kind": "finished", "reason": "an unexpected error"})
+            return
+
+        if outcome == "ok":
+            tester.log("That step worked.", "good")
+        else:
+            on_timeout = tester._value(step, "on_timeout", None)
+            doing = step_defs.ON_TIMEOUT_LABELS.get(on_timeout, "")
+            tester.log("That step did not find what it wanted."
+                       + (f" In a run it would: {doing.lower()}." if doing else ""),
+                       "warn")
+        tester.emit({"kind": "finished", "reason": "tested one step"})
 
     def _drain_events(self) -> None:
         try:
