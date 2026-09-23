@@ -28,6 +28,7 @@ MODULES = (
     "pixie.ui.app",
     "pixie.ui.theme",
     "pixie.ui.capture",
+    "pixie.ui.editing",
 )
 
 
@@ -61,6 +62,21 @@ def main() -> int:
             problems.append(f"step type {key!r} describes itself as an empty string")
 
     print(f"  {len(steps.STEP_TYPES)} step types, all wired to the engine")
+
+    # Every kind of field must have an editor to draw it. Without this, a new
+    # kind quietly falls back to a number box that edits the wrong thing.
+    from pixie.ui.app import App
+
+    kinds = {spec.kind for step_type in steps.STEP_TYPES.values()
+             for spec in step_type.fields}
+    for kind in sorted(kinds):
+        builder = App.FIELD_BUILDERS.get(kind)
+        if builder is None:
+            problems.append(f"field kind {kind!r} has no editor in App.FIELD_BUILDERS")
+        elif not hasattr(App, builder):
+            problems.append(f"field kind {kind!r} points at missing App.{builder}")
+
+    print(f"  {len(kinds)} field kinds, all with an editor")
 
     for name in ("hue", "rgb"):
         if name not in steps.COLOR_MATCH:

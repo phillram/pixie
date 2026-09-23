@@ -34,11 +34,20 @@ class Aborted(Exception):
 @dataclass
 class Settings:
     abort_key: str = "F8"
+    # Starts the run when idle and stops it when running, from any window.
+    # "off" disables it.
+    toggle_key: str = "F9"
     poll_interval: float = 0.25
     # Pauses are ranges. Set min and max the same for a fixed delay, or spread
     # them for a varying one.
     step_pause_min: float = 0.3
     step_pause_max: float = 0.3
+    # At a section boundary: moving on to the next section, or starting the
+    # current one again. Separate from the step pause, because the time an
+    # application needs between clicks is rarely the time it needs between
+    # screens -- often it needs none at all.
+    section_pause_min: float = 0.0
+    section_pause_max: float = 0.0
     cycle_pause_min: float = 1.0
     cycle_pause_max: float = 1.0
     failsafe_corner: bool = True
@@ -58,11 +67,21 @@ class Settings:
                 value = data.pop(old)
                 data.setdefault(f"{prefix}_min", value)
                 data.setdefault(f"{prefix}_max", value)
+        # The section pause arrived later. Before it existed, repeating a
+        # section waited the cycle pause, so a sequence saved back then
+        # inherits that value and goes on behaving exactly as it did.
+        if "section_pause_min" not in data and "cycle_pause_min" in data:
+            data["section_pause_min"] = data["cycle_pause_min"]
+            data.setdefault("section_pause_max", data.get("cycle_pause_max",
+                                                          data["cycle_pause_min"]))
         known = {f: data[f] for f in cls.__dataclass_fields__ if f in data}
         return cls(**known)
 
     def step_pause(self) -> float:
         return _between(self.step_pause_min, self.step_pause_max)
+
+    def section_pause(self) -> float:
+        return _between(self.section_pause_min, self.section_pause_max)
 
     def cycle_pause(self) -> float:
         return _between(self.cycle_pause_min, self.cycle_pause_max)
@@ -144,7 +163,8 @@ class Sequence:
         found: list[str] = []
         for index, step in enumerate(self.steps):
             if step.get("enabled", True):
-                found.extend(step_defs.validate(step, index))
+                found.extend(step_defs.validate(
+                    step, step_defs.location(self.steps, index)))
         return found
 
 
@@ -389,6 +409,19 @@ class Engine:
         self._click(x, y, step, "fixed point")
         return "ok"
 
+    def _do_click_box(self, step: dict[str, Any]) -> str:
+        box = self._region(step.get("box"))
+        if box is None:
+            self.log("    no box set to click in", "error")
+            return "timeout"
+        left, top, width, height = box
+        # A fresh spot every time, so the clicks don't all land on one pixel.
+        x = random.randint(left, left + max(0, int(width) - 1))
+        y = random.randint(top, top + max(0, int(height) - 1))
+        self.last_match = (x, y)
+        self._click(x, y, step, f"somewhere in the {width}x{height} box")
+        return "ok"
+
     def _do_click_last_match(self, step: dict[str, Any]) -> str:
         if self.last_match is None:
             self.log("    the step before this one found nothing, so there is "
@@ -504,6 +537,8 @@ class Engine:
         # With no dividers at all there is nothing to repeat internally: one
         # pass through the list is one cycle, exactly as it always was.
         sectioned = any(s.get("type") == "section" for s in self.sequence.steps)
+        # The numbers the GUI shows, so the log and the list agree.
+        numbers = step_defs.display_numbers(self.sequence.steps)
         current = 0
         index = sections[0][0]
         self._announce_section(sections[current])
@@ -517,17 +552,17 @@ class Engine:
                 # Fell off the end of the section: run it again from its top.
                 self.log(f"  -- repeating section '{name}'", "muted")
                 index = start
-                self._sleep(self.sequence.settings.cycle_pause())
+                self._sleep(self.sequence.settings.section_pause())
                 continue
 
             step = self.sequence.steps[index]
-            if not step.get("enabled", True) or step.get("type") in ("section", "note"):
+            if not step.get("enabled", True) or step.get("type") in step_defs.MARKERS:
                 index += 1
                 continue
 
             self._guard()
             self.emit({"kind": "step", "index": index, "step": step})
-            self.log(f"  {index + 1}. {step.get('name') or step['type']}")
+            self.log(f"  {numbers[index]}. {step.get('name') or step['type']}")
 
             outcome = self.run_step(step)
             if outcome == "ok":
@@ -556,13 +591,19 @@ class Engine:
                 self.log("    that was the last section - back to the top", "warn")
                 return "ok"
             self.log(f"    moving on from '{name}'", "warn")
+            self._sleep(self.sequence.settings.section_pause())
             index = sections[current][0]
             self._announce_section(sections[current])
 
     def _announce_section(self, section: tuple[int, int, str]) -> None:
-        if len(self.sections()) > 1:
-            self.log(f"  === {section[2]} ===")
-            self.emit({"kind": "section", "name": section[2]})
+        if len(self.sections()) <= 1:
+            return
+        start, _end, name = section
+        self.log(f"  === {name} ===")
+        # The divider's own row, so the GUI can light it up. A sequence whose
+        # first steps come before any divider has no row to point at.
+        divider = start if self.sequence.steps[start].get("type") == "section" else None
+        self.emit({"kind": "section", "name": name, "index": divider})
 
     def run(self, max_cycles: int | None = None) -> None:
         problems = self.sequence.problems()

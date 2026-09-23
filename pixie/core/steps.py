@@ -266,6 +266,21 @@ STEP_TYPES: dict[str, StepType] = {
         fields=(Field("pos", "point", "Where", None, required=True),) + _CLICK_FIELDS[:2],
         describe=lambda s: f"{_clicks_word(s)} at {_point(s)}",
     ),
+    "click_box": StepType(
+        key="click_box",
+        label="Click anywhere in a box",
+        blurb="Drag a box, and Pixie clicks a random spot inside it rather than "
+              "the same pixel every time. Use it where the exact pixel does not "
+              "matter: a big button, a card, an empty patch of table.\n\n"
+              "The box is picked once and never moves, so make it cover only "
+              "ground that is safe to click.",
+        fields=(Field("box", "box", "Box to click in", None, required=True,
+                      hint="Drag over the area. Every click lands somewhere "
+                           "inside it, chosen fresh each time."),) + _CLICK_FIELDS[:2],
+        describe=lambda s: (f"{_clicks_word(s)} somewhere in "
+                            + (f"a {s['box'][2]}x{s['box'][3]} box"
+                               if s.get("box") else "(no box yet)")),
+    ),
     "click_last_match": StepType(
         key="click_last_match",
         label="Click the last thing found",
@@ -315,7 +330,10 @@ _PAUSE_FIELD = Field(
          "no pause at all after this step.",
 )
 
-NO_PAUSE = ("section", "note")  # markers, never executed
+# Labels rather than instructions: never executed, never paused after, and
+# never given a number in the sequence list.
+MARKERS = ("section", "note")
+NO_PAUSE = MARKERS
 
 STEP_TYPES = {
     key: (step_type if key in NO_PAUSE
@@ -341,10 +359,57 @@ def describe(step: dict[str, Any]) -> str:
         return step_type.label
 
 
-def validate(step: dict[str, Any], index: int) -> list[str]:
-    """Human-readable problems that would stop this step from running."""
+def display_numbers(steps: list[dict[str, Any]]) -> list[int | None]:
+    """The number each step shows in the list, or None if it shows none.
+
+    Section dividers and notes are labels rather than instructions, so they
+    are not counted, and each divider starts the count again at 1. Numbering
+    the raw list position instead made the first real step of a sectioned
+    sequence read as step 2, which is nobody's idea of the first step.
+    """
+    numbers: list[int | None] = []
+    count = 0
+    for step in steps:
+        kind = step.get("type", "")
+        if kind == "section":
+            count = 0
+        if kind in MARKERS:
+            numbers.append(None)
+        else:
+            count += 1
+            numbers.append(count)
+    return numbers
+
+
+def section_name(steps: list[dict[str, Any]], index: int) -> str:
+    """The name of the section a step sits in, or '' if it is outside one."""
+    for earlier in range(index, -1, -1):
+        if steps[earlier].get("type") == "section":
+            return str(steps[earlier].get("name") or "Untitled section")
+    return ""
+
+
+def location(steps: list[dict[str, Any]], index: int) -> str:
+    """How to refer to one step in a message, the way the list shows it."""
+    step = steps[index]
     step_type = STEP_TYPES.get(step.get("type", ""))
-    where = f"Step {index + 1} ({step.get('name') or step.get('type')})"
+    label = str(step.get("name") or (step_type.label if step_type else step.get("type")))
+
+    number = display_numbers(steps)[index]
+    if number is None:
+        return label
+
+    section = section_name(steps, index)
+    where = f"Step {number}" + (f" of '{section}'" if section else "")
+    return f"{where} ({label})"
+
+
+def validate(step: dict[str, Any], where: str) -> list[str]:
+    """Human-readable problems that would stop this step from running.
+
+    `where` names the step for the message -- see `location`.
+    """
+    step_type = STEP_TYPES.get(step.get("type", ""))
     if step_type is None:
         return [f"{where}: unknown step type {step.get('type')!r}"]
 

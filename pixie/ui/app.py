@@ -5,7 +5,7 @@
 The left pane is the sequence. Pick a step to edit it on the right; every
 image, color, point and search area has a Capture button that freezes the
 screen and lets you point at what you mean. Start runs the sequence over and
-over until you press Stop or F8.
+over until you press Stop, or the start/stop key from anywhere.
 """
 
 from __future__ import annotations
@@ -21,6 +21,7 @@ from tkinter import filedialog, messagebox, ttk
 from typing import Any
 
 from pixie.ui import capture
+from pixie.ui import editing
 from pixie.core import engine as engine_mod
 from pixie.system import keyboard
 from pixie.system import screen
@@ -33,6 +34,11 @@ from pixie.paths import (APP_DIR as PROJECT_DIR, APP_NAME, ICON_PATH, IMAGES_DIR
 LOG_COLORS = {"info": theme.FG, "warn": theme.WARN, "error": theme.ERROR,
               "good": theme.OK, "muted": theme.MUTED}
 
+
+OFF = "Off"  # what the start/stop key is set to when you don't want one
+HOTKEYS = ["F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F11",
+           "F12", "ESC", "PAUSE", "SCROLLLOCK"]
+HOTKEY_POLL_MS = 90  # how often to ask Windows whether the start key is down
 
 PARK_LABELS = {
     "off": "leave the cursor alone",
@@ -130,6 +136,11 @@ class SettingsDialog:
          "Breathing room so the application can react. Give the two boxes "
          "different values and the pause varies randomly between them, which "
          "also stops every cycle taking exactly the same time."),
+        ("section_pause", "Pause between sections",
+         "Waited when Pixie moves on to the next section, or starts the "
+         "current one again. Separate from the step pause, so you can have "
+         "one without the other - set both to 0 to move between screens with "
+         "no delay at all."),
         ("cycle_pause", "Pause between cycles",
          "Extra wait after the last step, before starting the list again."),
     )
@@ -183,15 +194,28 @@ class SettingsDialog:
                                        sticky="w", pady=(0, 10))
         row += 1
 
+        ttk.Label(frame, text="Start/stop key").grid(row=row, column=0, sticky="w",
+                                                     padx=(0, 14), pady=(4, 0))
+        self.toggle_var = tk.StringVar(value=settings.toggle_key)
+        ttk.Combobox(frame, textvariable=self.toggle_var, state="readonly", width=10,
+                     values=[OFF] + HOTKEYS).grid(row=row, column=1, sticky="w",
+                                                  pady=(4, 0))
+        row += 1
+        ttk.Label(frame, text="One key that starts the run and stops it again, from "
+                              "anywhere. Press it once to start, once more to stop.",
+                  style="Muted.TLabel", wraplength=int(440 * scale),
+                  justify="left").grid(row=row, column=0, columnspan=2,
+                                       sticky="w", pady=(0, 10))
+        row += 1
+
         ttk.Label(frame, text="Stop key").grid(row=row, column=0, sticky="w",
                                                padx=(0, 14), pady=(4, 0))
         self.abort_var = tk.StringVar(value=settings.abort_key)
         ttk.Combobox(frame, textvariable=self.abort_var, state="readonly", width=10,
-                     values=["F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9",
-                             "F10", "F11", "F12", "ESC", "PAUSE", "SCROLLLOCK"]).grid(
-            row=row, column=1, sticky="w", pady=(4, 0))
+                     values=HOTKEYS).grid(row=row, column=1, sticky="w", pady=(4, 0))
         row += 1
-        ttk.Label(frame, text="Works even when another window has focus.",
+        ttk.Label(frame, text="Stops the run and nothing else. Works even when "
+                              "another window has focus.",
                   style="Muted.TLabel").grid(row=row, column=0, columnspan=2,
                                              sticky="w", pady=(0, 10))
         row += 1
@@ -266,7 +290,14 @@ class SettingsDialog:
                 messagebox.showwarning(
                     "Not a number", f"'{var.get()}' isn't a number of seconds.")
                 return
+        if self.toggle_var.get() == self.abort_var.get():
+            messagebox.showwarning(
+                "Same key twice",
+                f"{self.abort_var.get()} cannot both start and stop the run. "
+                "Give the start/stop key a different key, or turn it off.")
+            return
         self.settings.abort_key = self.abort_var.get()
+        self.settings.toggle_key = self.toggle_var.get()
         self.settings.failsafe_corner = bool(self.corner_var.get())
         self.settings.park_mouse = PARK_MODES.get(self.park_var.get(), "off")
         self.settings.park_point = self.park_point
@@ -287,6 +318,17 @@ class SettingsDialog:
 
 
 class App:
+    # Which builder draws each kind of field. A kind that isn't listed falls
+    # back to a plain number box, which is wrong but silent -- so
+    # tools/check_wiring.py checks every declared kind appears here.
+    FIELD_BUILDERS = {
+        "image": "_field_image", "point": "_field_point", "color": "_field_color",
+        "region": "_field_region", "box": "_field_box", "choice": "_field_choice",
+        "integer": "_field_integer", "offset": "_field_offset", "key": "_field_key",
+        "pause": "_field_pause", "multiline": "_field_multiline",
+        "number": "_field_number",
+    }
+
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         self.style = theme.apply(root)
@@ -313,6 +355,9 @@ class App:
         self.events: queue.Queue[dict[str, Any]] = queue.Queue()
         self.field_vars: dict[str, tk.Variable] = {}
         self.running = False
+        self.lit_section: int | None = None   # row painted as the live section
+        self.capturing = False                # picker is up: ignore the hotkey
+        self._hotkey_was_down = False
 
         self.dry_run = tk.BooleanVar(value=True)
         self.hide_while_running = tk.BooleanVar(value=True)
@@ -322,6 +367,8 @@ class App:
         self._build_toolbar()
         self._build_body()
         self._build_log()
+        # Ctrl+Backspace and friends, which Tk leaves out of every entry.
+        editing.install(root)
 
         root.protocol("WM_DELETE_WINDOW", self.on_close)
         root.bind("<Control-s>", lambda _e: self.save())
@@ -333,9 +380,15 @@ class App:
         self._restore_last_sequence(state)
         self.refresh_list()
         self._drain_job: str | None = self.root.after(80, self._drain_events)
+        self._hotkey_job: str | None = self.root.after(HOTKEY_POLL_MS,
+                                                       self._poll_hotkey)
+        settings = self.sequence.settings
         self.log("Ready. Build a sequence on the left, then press Start.", "muted")
-        self.log("Stop any time with the Stop button, F8, or the mouse in the "
-                 "top-left corner of the screen.", "muted")
+        if self._hotkey():
+            self.log(f"{settings.toggle_key} starts and stops the run from "
+                     "anywhere, even with another window in front.", "muted")
+        self.log(f"Stop any time with the Stop button, {settings.abort_key}, or the "
+                 "mouse in the top-left corner of the screen.", "muted")
 
     # -- construction ----------------------------------------------------
 
@@ -395,11 +448,14 @@ class App:
         ttk.Separator(self.root).pack(fill="x")
 
     def _run_tip_text(self) -> str:
-        """The Start/Stop tooltip, which names the live stop key."""
+        """The Start/Stop tooltip, which names the live hotkeys."""
         key = self.sequence.settings.abort_key
+        hotkey = self._hotkey()
         stops = (f"To stop: this button, {key} from anywhere (even when another "
                  "window has focus), or shove the mouse into the top-left corner "
                  "of the screen.")
+        if hotkey:
+            stops = f"{hotkey} starts and stops the run from anywhere.\n\n" + stops
         if self.running:
             return "Stop the run.\n\n" + stops
         return ("Start the sequence. It loops from the top over and over until "
@@ -554,8 +610,12 @@ class App:
 
     # -- sequence list ---------------------------------------------------
 
+    def _numbers(self) -> list[int | None]:
+        """The number shown against each row. Dividers and notes get none."""
+        return step_defs.display_numbers(self.sequence.steps)
+
     @staticmethod
-    def _row_label(index: int, step: dict[str, Any]) -> tuple[str, str | None]:
+    def _row_label(number: int | None, step: dict[str, Any]) -> tuple[str, str | None]:
         """How one step reads in the list, and what color it should be.
 
         If you have given a step your own name, that is what you want to read
@@ -579,7 +639,7 @@ class App:
         else:
             text = summary
 
-        prefix = f"{index + 1:>2}. " if enabled else f"{index + 1:>2}. - "
+        prefix = f"{number:>2}. " if enabled else f"{number:>2}. - "
         return prefix + text, None if enabled else theme.DISABLED
 
     def _refresh_row(self, index: int) -> None:
@@ -591,7 +651,8 @@ class App:
         """
         if not (0 <= index < self.listbox.size()):
             return
-        label, color = self._row_label(index, self.sequence.steps[index])
+        label, color = self._row_label(self._numbers()[index],
+                                       self.sequence.steps[index])
         was_selected = index in self.listbox.curselection()
         self.listbox.delete(index)
         self.listbox.insert(index, label)
@@ -603,8 +664,10 @@ class App:
     def refresh_list(self, keep: int | None = None) -> None:
         selection = keep if keep is not None else self.selected
         self.listbox.delete(0, "end")
+        self.lit_section = None  # the rows it was painted on have gone
+        numbers = self._numbers()
         for index, step in enumerate(self.sequence.steps):
-            label, color = self._row_label(index, step)
+            label, color = self._row_label(numbers[index], step)
             self.listbox.insert("end", label)
             if color:
                 self.listbox.itemconfigure(index, foreground=color)
@@ -645,7 +708,7 @@ class App:
         self.sequence.steps.insert(at, step)
         self.mark_dirty()
         self.refresh_list(keep=at)
-        self.log(f"Added step {at + 1}: {step['name']}", "muted")
+        self.log(f"Added {step_defs.location(self.sequence.steps, at)}", "muted")
 
     def duplicate(self) -> None:
         step = self.current_step()
@@ -710,7 +773,10 @@ class App:
                       text=f"Unknown step type: {step.get('type')!r}").grid(row=0, column=0)
             return
 
-        self.editor_title.configure(text=f"Step {self.selected + 1}: {step_type.label}")
+        number = self._numbers()[self.selected]
+        self.editor_title.configure(
+            text=step_type.label if number is None
+            else f"Step {number}: {step_type.label}")
         self.test_button.configure(state="normal")
         self.editor.columnconfigure(1, weight=1)
 
@@ -737,13 +803,7 @@ class App:
         ttk.Label(self.editor, text=spec.label, style="Panel.TLabel").grid(
             row=row, column=0, sticky="w", pady=4, padx=(0, 12))
 
-        builder = {
-            "image": self._field_image, "point": self._field_point,
-            "color": self._field_color, "region": self._field_region,
-            "choice": self._field_choice, "integer": self._field_integer,
-            "offset": self._field_offset, "key": self._field_key,
-            "pause": self._field_pause, "multiline": self._field_multiline,
-        }.get(spec.kind, self._field_number)
+        builder = getattr(self, self.FIELD_BUILDERS.get(spec.kind, "_field_number"))
         # A builder returns how many extra rows it used, so a field can put a
         # preview underneath itself.
         row += 1 + (builder(step, spec, row) or 0)
@@ -871,23 +931,34 @@ class App:
         return f"RGB({r}, {g}, {b})    #{r:02x}{g:02x}{b:02x}"
 
     def _field_region(self, step: dict[str, Any], spec: step_defs.Field, row: int) -> None:
+        self._region_field(step, spec, row, whole_screen=True)
+
+    def _field_box(self, step: dict[str, Any], spec: step_defs.Field, row: int) -> None:
+        """A box to click inside. Same picker, but 'whole screen' makes no
+        sense here -- it would mean clicking anywhere at all."""
+        self._region_field(step, spec, row, whole_screen=False)
+
+    def _region_field(self, step: dict[str, Any], spec: step_defs.Field, row: int,
+                      whole_screen: bool) -> None:
+        empty = "whole screen (slower)" if whole_screen else "nothing picked yet"
         value = step.get(spec.key)
-        var = tk.StringVar(value=self._region_label(value))
+        var = tk.StringVar(value=self._region_label(value, empty))
         self._readonly_entry(row, var)
         holder = ttk.Frame(self.editor, style="Panel.TFrame")
         holder.grid(row=row, column=2, sticky="w", padx=(8, 0))
         ttk.Button(holder, text="Pick...", style="Tool.TButton",
                    command=lambda: self._capture_region(step, spec, var)).pack(side="left")
-        ttk.Button(holder, text="Whole screen", style="Tool.TButton",
-                   command=lambda: (self._set_value(step, spec.key, None),
-                                    var.set(self._region_label(None)))).pack(
-            side="left", padx=(6, 0))
+        if whole_screen:
+            ttk.Button(holder, text="Whole screen", style="Tool.TButton",
+                       command=lambda: (self._set_value(step, spec.key, None),
+                                        var.set(self._region_label(None, empty)))).pack(
+                side="left", padx=(6, 0))
         self.field_vars[spec.key] = var
 
     @staticmethod
-    def _region_label(value: Any) -> str:
+    def _region_label(value: Any, empty: str = "whole screen (slower)") -> str:
         if not value:
-            return "whole screen (slower)"
+            return empty
         left, top, width, height = value
         return f"{width}x{height} at {left}, {top}"
 
@@ -1036,6 +1107,7 @@ class App:
         if self.running:
             messagebox.showinfo("Running", "Stop the run before capturing.")
             return None
+        self.capturing = True  # the start/stop key must not fire mid-capture
         self.root.withdraw()
         self.root.update()
         time.sleep(0.35)  # let the desktop repaint before we photograph it
@@ -1044,6 +1116,7 @@ class App:
             picker.run()
             return picker
         finally:
+            self.capturing = False
             self.root.deiconify()
             self.root.lift()
 
@@ -1112,6 +1185,10 @@ class App:
         left, top, width, height = picker.to_absolute(picker.result)
         self._set_value(step, spec.key, [left, top, width, height])
         var.set(self._region_label([left, top, width, height]))
+        if spec.kind == "box":
+            self.log(f"Click box {width}x{height} at {left}, {top} - "
+                     f"{width * height:,} pixels to choose from.", "good")
+            return
         full_w, full_h = screen.virtual_bounds()[2:]
         share = (width * height) / (full_w * full_h)
         self.log(f"Search area {width}x{height} at {left}, {top} "
@@ -1153,8 +1230,11 @@ class App:
             s = self.sequence.settings
             self.log(f"Settings: {_range_text(s.step_pause_min, s.step_pause_max)} "
                      f"after each step, "
+                     f"{_range_text(s.section_pause_min, s.section_pause_max)} "
+                     f"between sections, "
                      f"{_range_text(s.cycle_pause_min, s.cycle_pause_max)} "
-                     f"between cycles, stop key {s.abort_key}, "
+                     f"between cycles, start/stop key {s.toggle_key}, "
+                     f"stop key {s.abort_key}, "
                      f"cursor {PARK_LABELS.get(s.park_mouse, 'left alone')}.", "good")
 
     def new(self) -> None:
@@ -1301,6 +1381,29 @@ class App:
         else:
             self.start_run()
 
+    def _hotkey(self) -> str | None:
+        """The start/stop key, or None if there isn't one."""
+        key = str(self.sequence.settings.toggle_key or "").strip()
+        return None if key.lower() in ("", "off", "none") else key
+
+    def _poll_hotkey(self) -> None:
+        """Watch for the start/stop key while another window has focus.
+
+        Tk only sees keys aimed at our own window, and the whole point of this
+        one is to work while you are looking at the application being clicked.
+        So we ask Windows directly, and act on the press rather than the hold,
+        or one long press would start and stop the run a dozen times.
+        """
+        key = self._hotkey()
+        try:
+            down = bool(key) and not self.capturing and screen.key_pressed(key)
+        except (ValueError, OSError):
+            down = False  # an unknown key name: treat it as no hotkey at all
+        if down and not self._hotkey_was_down:
+            self.toggle_run()
+        self._hotkey_was_down = down
+        self._hotkey_job = self.root.after(HOTKEY_POLL_MS, self._poll_hotkey)
+
     def start_run(self) -> None:
         problems = self.sequence.problems()
         if problems:
@@ -1324,8 +1427,11 @@ class App:
         self.worker = threading.Thread(target=self.engine.run, daemon=True)
         self.worker.start()
         if self.hide_while_running.get():
+            stop_keys = " or ".join(filter(None, (self._hotkey(),
+                                                  self.sequence.settings.abort_key)))
             self.log("Minimizing to stay out of the way - Pixie is still running. "
-                     "Bring her back from the taskbar, or press F8 to stop.", "warn")
+                     f"Bring her back from the taskbar, or press {stop_keys} to "
+                     "stop.", "warn")
             self.root.after(400, self.root.iconify)
 
     def stop_run(self) -> None:
@@ -1337,7 +1443,8 @@ class App:
         step = self.current_step()
         if step is None or self.running:
             return
-        problems = step_defs.validate(step, self.selected)
+        where = step_defs.location(self.sequence.steps, self.selected)
+        problems = step_defs.validate(step, where)
         if problems:
             for problem in problems:
                 self.log(problem, "error")
@@ -1351,7 +1458,7 @@ class App:
         self.running = True
         self.run_button.configure(text="■  Stop", style="Stop.TButton")
         self.status_text.set("Testing step")
-        self.log(f"Testing step {self.selected + 1}...", "muted")
+        self.log(f"Testing {where}...", "muted")
         self.worker = threading.Thread(target=lambda: tester.run(max_cycles=1), daemon=True)
         self.worker.start()
 
@@ -1374,6 +1481,8 @@ class App:
                 self.listbox.selection_clear(0, "end")
                 self.listbox.selection_set(index)
                 self.listbox.see(index)
+        elif kind == "section":
+            self._light_section(event.get("index"))
         elif kind == "cycle":
             done = event["completed"]
             self.cycle_text.set(f"Cycles: {done}")
@@ -1383,8 +1492,26 @@ class App:
         elif kind == "finished":
             self._on_finished(event.get("reason", "stopped"))
 
+    def _light_section(self, index: int | None) -> None:
+        """Mark which section is running now, so the list says where you are.
+
+        The running step is already shown by the selection, which moves every
+        step or two. The section is the slower, more useful answer to 'what is
+        it doing', so it gets its own, steadier highlight.
+        """
+        if self.lit_section is not None and self.lit_section < self.listbox.size():
+            self.listbox.itemconfigure(self.lit_section, background=theme.PANEL,
+                                       foreground=theme.ACCENT)
+        self.lit_section = None
+        if index is None or not (0 <= index < self.listbox.size()):
+            return
+        self.listbox.itemconfigure(index, background=theme.ACCENT_DARK,
+                                   foreground="#ffffff")
+        self.lit_section = index
+
     def _on_finished(self, reason: str) -> None:
         self.running = False
+        self._light_section(None)
         self._update_title()
         self._refresh_run_tip()
         self.run_button.configure(text="▶  Start", style="Accent.TButton")
@@ -1409,9 +1536,11 @@ class App:
         self.save_preferences()
         # Cancel the pending poll, or it fires after the window is gone and
         # Tk complains about an invalid command.
-        if self._drain_job is not None:
-            self.root.after_cancel(self._drain_job)
-            self._drain_job = None
+        for job in ("_drain_job", "_hotkey_job"):
+            pending = getattr(self, job, None)
+            if pending is not None:
+                self.root.after_cancel(pending)
+                setattr(self, job, None)
         self.root.destroy()
 
 

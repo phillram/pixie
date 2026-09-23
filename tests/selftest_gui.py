@@ -216,6 +216,201 @@ def check_names_show_in_the_list():
     return problems
 
 
+def check_numbering_and_section_highlight():
+    """Dividers take no number, each section counts from 1, and the running
+    section is lit up while it runs."""
+    from pixie.ui import theme
+
+    problems = []
+    steps = [step_defs.new_step(k) for k in
+             ("section", "wait_for_image", "note", "click_point",
+              "section", "press_key")]
+    steps[0]["name"] = "Before Game"
+    steps[4]["name"] = "In Game"
+    app.sequence = engine_mod.Sequence(name="numbering", steps=steps)
+    app.refresh_list(keep=0)
+    root.update()
+
+    rows = [app.listbox.get(i) for i in range(app.listbox.size())]
+    numbered = {1: " 1.", 3: " 2.", 5: " 1."}
+    for index, prefix in numbered.items():
+        if not rows[index].startswith(prefix):
+            problems.append(f"row {index} reads {rows[index]!r}, expected to "
+                            f"start {prefix!r}")
+    for index in (0, 2, 4):
+        if any(ch.isdigit() for ch in rows[index][:4]):
+            problems.append(f"marker row {index} was numbered: {rows[index]!r}")
+    print(f"Numbering ok: {[r.strip()[:14] for r in rows]}")
+
+    # The editor title agrees with the list rather than the list position.
+    app.selected = 5
+    app.build_editor()
+    root.update()
+    title = str(app.editor_title.cget("text"))
+    if not title.startswith("Step 1:"):
+        problems.append(f"editor titled {title!r} for the first step of a section")
+
+    # Lighting up a section, then the next one, leaves only the live one lit.
+    app._handle({"kind": "section", "name": "Before Game", "index": 0})
+    root.update()
+    if str(app.listbox.itemcget(0, "background")) != theme.ACCENT_DARK:
+        problems.append("the running section was not highlighted")
+    app._handle({"kind": "section", "name": "In Game", "index": 4})
+    root.update()
+    if str(app.listbox.itemcget(0, "background")) == theme.ACCENT_DARK:
+        problems.append("the previous section stayed highlighted")
+    if str(app.listbox.itemcget(4, "background")) != theme.ACCENT_DARK:
+        problems.append("the second section was not highlighted")
+    app._on_finished("stopped")
+    root.update()
+    if str(app.listbox.itemcget(4, "background")) == theme.ACCENT_DARK:
+        problems.append("a section stayed highlighted after the run finished")
+    print("Section highlight ok: follows the run, clears at the end")
+    return problems
+
+
+def check_word_deletion():
+    """Ctrl+Backspace deletes a word, not a letter, and the edit is stored."""
+    from tkinter import ttk
+
+    from pixie.ui import editing
+
+    problems = []
+    # The boundary rules on their own, where the answers are exact.
+    cases = [
+        ("Click the OK button", 19, "Click the OK "),
+        ("Click the OK button ", 20, "Click the OK "),
+        ("images/ok.png", 13, "images/ok."),
+        ("one", 3, ""),
+        ("", 0, ""),
+    ]
+    for text, caret, expected in cases:
+        got = text[:editing.word_start(text, caret)] + text[caret:]
+        if got != expected:
+            problems.append(f"deleting a word from {text!r} gave {got!r}, "
+                            f"expected {expected!r}")
+
+    # And through a real entry, wired to a real step. Tk delivers a generated
+    # key event to whatever has focus, so the window has to be up for this.
+    step = step_defs.new_step("click_image")
+    app.sequence = engine_mod.Sequence(name="typing", steps=[step])
+    app.refresh_list(keep=0)
+    app.selected = 0
+    app.build_editor()
+    root.deiconify()
+    root.geometry("1100x760+30+30")
+    root.update()
+    root.focus_force()
+    root.update()
+
+    name_var = app.field_vars["name"]
+    entry = next((w for w in _descendants(app.editor)
+                  if isinstance(w, ttk.Entry)
+                  and str(w.cget("textvariable")) == str(name_var)), None)
+    if entry is None:
+        problems.append("could not find the name entry to type into")
+        return problems
+
+    entry.focus_set()
+    name_var.set("Click the OK button")
+    entry.icursor("end")
+    root.update()
+    if root.focus_get() is not entry:
+        print("Word editing   : SKIPPED (the entry could not take focus)")
+        root.withdraw()
+        return problems
+    entry.event_generate("<Control-BackSpace>")
+    root.update()
+    if name_var.get() != "Click the OK ":
+        problems.append(f"Ctrl+Backspace left {name_var.get()!r} in the entry")
+    if step.get("name") != "Click the OK ":
+        problems.append(f"the deletion did not reach the step: {step.get('name')!r}")
+
+    entry.event_generate("<Shift-BackSpace>")
+    root.update()
+    if name_var.get() != "Click the ":
+        problems.append(f"Shift+Backspace left {name_var.get()!r}")
+
+    entry.icursor(0)
+    entry.event_generate("<Control-Delete>")
+    root.update()
+    if name_var.get() != " the ":
+        problems.append(f"Ctrl+Delete left {name_var.get()!r}")
+
+    entry.event_generate("<Control-a>")
+    root.update()
+    if not entry.selection_present():
+        problems.append("Ctrl+A did not select the whole field")
+
+    root.withdraw()
+    print("Word editing ok: Ctrl+Backspace, Shift+Backspace, Ctrl+Delete, Ctrl+A")
+    return problems
+
+
+def check_start_stop_hotkey():
+    """One press of the hotkey toggles the run; holding it does not repeat."""
+    problems = []
+    pressed = {"down": False}
+    toggles = {"count": 0}
+
+    original_key_pressed = gui.screen.key_pressed
+    original_toggle = app.toggle_run
+    gui.screen.key_pressed = lambda name: pressed["down"]
+    app.toggle_run = lambda: toggles.__setitem__("count", toggles["count"] + 1)
+
+    def tick():
+        app._poll_hotkey()
+        if app._hotkey_job is not None:      # it reschedules itself; we drive it
+            root.after_cancel(app._hotkey_job)
+            app._hotkey_job = None
+
+    try:
+        app.sequence.settings.toggle_key = "F9"
+        pressed["down"] = True
+        tick(), tick(), tick()               # held down for three polls
+        if toggles["count"] != 1:
+            problems.append(f"holding the hotkey toggled {toggles['count']} times, "
+                            "expected 1")
+        pressed["down"] = False
+        tick()
+        pressed["down"] = True
+        tick()
+        if toggles["count"] != 2:
+            problems.append(f"a second press toggled {toggles['count']} times in "
+                            "total, expected 2")
+
+        # Off means off, and so does a key Windows has never heard of.
+        pressed["down"] = False
+        tick()
+        app.sequence.settings.toggle_key = gui.OFF
+        pressed["down"] = True
+        tick()
+        if toggles["count"] != 2:
+            problems.append("the hotkey fired while it was switched off")
+
+        app.sequence.settings.toggle_key = "NOT A KEY"
+        gui.screen.key_pressed = original_key_pressed
+        tick()
+        if toggles["count"] != 2:
+            problems.append("an unknown hotkey name did not stay quiet")
+
+        # Capturing borrows the whole screen, so the hotkey must stand down.
+        app.sequence.settings.toggle_key = "F9"
+        gui.screen.key_pressed = lambda name: True
+        app.capturing = True
+        tick()
+        app.capturing = False
+        if toggles["count"] != 2:
+            problems.append("the hotkey fired while the screen picker was up")
+    finally:
+        gui.screen.key_pressed = original_key_pressed
+        app.toggle_run = original_toggle
+        app.sequence.settings.toggle_key = "F9"
+
+    print("Hotkey ok: one toggle per press, ignored when off or capturing")
+    return problems
+
+
 def check_image_and_color_previews():
     """An image step shows the picture; a color step shows the color."""
     import cv2
@@ -379,6 +574,21 @@ try:
     failures.extend(check_names_show_in_the_list())
 except Exception as error:  # noqa: BLE001
     failures.append(f"name display check: {error!r}")
+
+try:
+    failures.extend(check_numbering_and_section_highlight())
+except Exception as error:  # noqa: BLE001
+    failures.append(f"numbering check: {error!r}")
+
+try:
+    failures.extend(check_word_deletion())
+except Exception as error:  # noqa: BLE001
+    failures.append(f"word editing check: {error!r}")
+
+try:
+    failures.extend(check_start_stop_hotkey())
+except Exception as error:  # noqa: BLE001
+    failures.append(f"hotkey check: {error!r}")
 
 try:
     failures.extend(check_image_and_color_previews())

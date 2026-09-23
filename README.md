@@ -16,12 +16,15 @@ Windows only. Dark themed.
   detect a glowing border or a highlight
 * Handle the dialog that only sometimes appears, without falling over when it
   does not
+* Click a random spot inside a box you draw, rather than the same pixel forever
 * Press keys
 * Wait for things, with a timeout or indefinitely
 * Group steps into sections, one per screen, each repeating until its start
   condition stops matching
 
 Every pause can be a range rather than a fixed number, so the timing varies.
+Steps, sections and whole cycles each get their own, so you can have a delay
+between clicks and none at all between screens.
 
 ## Requirements
 
@@ -89,6 +92,20 @@ captured image keeps working after a rename: the step name only seeds the
 filename when the image is first captured, and the stored path is independent
 of it afterwards.
 
+### Typing in Pixie
+
+Every box you can type in takes the editing keys you would expect:
+
+| Key | What it does |
+| --- | --- |
+| Ctrl+Backspace, Shift+Backspace | Delete the word before the caret |
+| Ctrl+Delete | Delete the word after it |
+| Ctrl+A | Select everything in the box |
+
+Tk, which Pixie's window is built on, leaves these out and binds Ctrl+A to
+"go to the start of the line" instead. Shift+Delete is left alone, because it
+has meant Cut for longer than any of this.
+
 Pixie remembers the Dry run and Minimize settings, the window size and position,
 and which sequence you had open, so she comes back the way you left her. A saved
 position on a monitor that no longer exists is ignored rather than opening the
@@ -108,6 +125,7 @@ Sequences are saved as JSON in `sequences/`. Captured reference images go in
 | Click an image | Find a picture and click it |
 | Click an image if it appears | Optional version of the above |
 | Click a fixed spot | Always the same coordinates |
+| Click anywhere in a box | Drag a box, get a random spot inside it every time |
 | Click the last thing found | Click wherever the previous step found something |
 | Press a key | Send a keystroke, optionally several times |
 | Wait a moment | Pause for a fixed or random length of time |
@@ -178,30 +196,46 @@ section Pixie wraps back to the first.
 
 ```
 === Screen 1 ===
- 2. Wait for screen 1's marker      If not found: move on
- 3. do the work
-                                    end of section, back to step 2
+ 1. Wait for screen 1's marker      If not found: move on
+ 2. do the work
+                                    end of section, back to step 1
 === Screen 2 ===
- 6. Wait for screen 2's marker      If not found: move on
- 7. do the work
+ 1. Wait for screen 2's marker      If not found: move on
+ 2. do the work
 ```
 
 Which reads as: do screen 1 until its marker stops appearing, then screen 2 the
 same way, then start again.
 
+Each section counts its steps from 1, and the dividers and notes are not
+counted at all, because they are labels rather than instructions. While a
+sequence runs, the section Pixie is in is highlighted in the list, so you can
+tell where she is at a glance without reading the log.
+
+The pause between sections is separate from the pause between steps. Set it to
+0 in Settings and Pixie moves from one screen to the next without waiting,
+while still pausing between clicks. It applies both when a section hands over
+to the next one and when a section starts itself again.
+
 A sequence with no dividers is treated as one section covering everything, which
 behaves exactly as it did before sections existed.
 
-## Stopping it
+## Starting and stopping it
 
-Three ways, all of which work while another application has focus:
+F9 starts the run and stops it again. It works while the application you are
+automating has focus, which is the only time it is any use, so you never have
+to go and find Pixie's window to start a job.
 
+To stop, any of these, all of which work from another application:
+
+* F9 again
 * The Stop button
-* F8, configurable in Settings
+* F8
 * Put the mouse in the top left corner of the screen
 
-All three are checked between every step and during every wait, so it stops
-within about 50ms.
+All of them are checked between every step and during every wait, so it stops
+within about 50ms. Both keys are configurable in Settings, and the start/stop
+key can be switched off entirely if it clashes with something.
 
 Pixie minimizes herself when you press Start, so she is not sitting on top of the
 thing she is clicking. She keeps running. The taskbar title counts the cycles.
@@ -253,10 +287,15 @@ do: they capture the real screen and send real input.
 
 `selftest.py` crops a patch of your actual screen and matches it back, checks
 hue matching beats RGB on a synthetic gradient, runs a three section sequence to
-confirm each one repeats until its start point fails, and sends real keystrokes
-and a real double click to its own window to prove input actually lands. It
-skips the input checks rather than firing stray keystrokes if its test window
-cannot take focus.
+confirm each one repeats until its start point fails, checks a click box lands
+inside itself and never twice in the same place, and sends real keystrokes and a
+real double click to its own window to prove input actually lands. It skips the
+input checks rather than firing stray keystrokes if its test window cannot take
+focus.
+
+`check_wiring.py` also checks that every kind of field a step can declare has
+an editor to draw it, because a missing one falls back to a plain number box
+and edits the wrong thing without complaining.
 
 ### Layout
 
@@ -276,6 +315,7 @@ pixie/
 │   └── ui/                the tkinter application
 │       ├── app.py         main window
 │       ├── theme.py       dark theme and tooltips
+│       ├── editing.py     the editing keys Tk leaves out
 │       └── capture.py     the freeze-screen picker
 ├── tools/                 standalone helpers, not imported by the app
 │   ├── build_exe.py       builds Pixie.exe

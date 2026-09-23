@@ -89,6 +89,9 @@ def main() -> int:
     failures.extend(_check_color_search())
     failures.extend(_check_hue_matching())
     failures.extend(_check_sections())
+    failures.extend(_check_numbering())
+    failures.extend(_check_section_pause())
+    failures.extend(_check_click_box())
     failures.extend(_check_keyboard())
     failures.extend(_check_mouse())
 
@@ -175,6 +178,129 @@ def _check_sections() -> list[str]:
     plain_runner.run(max_cycles=2)
     if plain_runner.cycles_completed != 2:
         problems.append("a sequence with no sections no longer completes cycles")
+    return problems
+
+
+def _check_numbering() -> list[str]:
+    """Dividers and notes are not steps, so they take no number.
+
+    Numbering the raw list position made the first step of a sectioned
+    sequence read as 2, which is what the divider above it had taken.
+    """
+    steps = [
+        {"type": "section", "name": "Before Game"},
+        {"type": "wait_for_image", "name": "Look for main menu"},
+        {"type": "note", "text": "the menu takes a while"},
+        {"type": "click_point", "name": "Click Play"},
+        {"type": "section", "name": "In Game"},
+        {"type": "press_key", "name": "Play a card"},
+    ]
+    numbers = step_defs.display_numbers(steps)
+    expected = [None, 1, None, 2, None, 1]
+
+    problems = []
+    print(f"Numbering       : {numbers}")
+    if numbers != expected:
+        problems.append(f"numbered {numbers}, expected {expected}")
+
+    where = step_defs.location(steps, 5)
+    if where != "Step 1 of 'In Game' (Play a card)":
+        problems.append(f"step located as {where!r}")
+    if step_defs.location(steps, 1) != "Step 1 of 'Before Game' (Look for main menu)":
+        problems.append(f"first step located as {step_defs.location(steps, 1)!r}")
+
+    # No sections at all: plain numbering, no section name to mention.
+    plain = [{"type": "press_key", "name": "Q"}, {"type": "wait", "name": "Settle"}]
+    if step_defs.display_numbers(plain) != [1, 2]:
+        problems.append("an unsectioned sequence stopped numbering from 1")
+    if step_defs.location(plain, 1) != "Step 2 (Settle)":
+        problems.append(f"unsectioned step located as {step_defs.location(plain, 1)!r}")
+    return problems
+
+
+def _check_section_pause() -> list[str]:
+    """Sections can pause differently from steps, including not at all."""
+    problems = []
+    settings = engine_mod.Settings(step_pause_min=0.4, step_pause_max=0.4,
+                                   section_pause_min=0, section_pause_max=0)
+    if settings.section_pause() != 0:
+        problems.append("a zero section pause did not come out as zero")
+    if settings.step_pause() != 0.4:
+        problems.append("the step pause changed when the section pause did")
+
+    # A sequence saved before section pauses existed must not suddenly start
+    # sprinting between sections: it inherits whatever its cycle pause was.
+    old = engine_mod.Settings.from_dict({"cycle_pause_min": 2.0, "cycle_pause_max": 3.0})
+    if (old.section_pause_min, old.section_pause_max) != (2.0, 3.0):
+        problems.append(f"an old sequence inherited {old.section_pause_min}-"
+                        f"{old.section_pause_max}s between sections, expected 2.0-3.0")
+    # But a new one starts at zero, so sections run straight on.
+    if engine_mod.Settings().section_pause_max != 0.0:
+        problems.append("a new sequence defaulted to a pause between sections")
+
+    # And the engine must actually wait it. Three sections, each handing over
+    # at once, so the run is section pauses and nothing else.
+    waits: list[float] = []
+
+    class Timed(engine_mod.Engine):
+        def _sleep(self, seconds):
+            waits.append(seconds)
+
+        def run_step(self, step):
+            return "timeout"  # every start point fails: hand straight over
+
+    def divider(name):
+        return {"type": "section", "name": name, "enabled": True}
+
+    def start():
+        return {"type": "wait_for_image", "enabled": True, "image": "x",
+                "on_timeout": "next_section"}
+
+    sequence = engine_mod.Sequence(
+        name="pauses", steps=[divider("A"), start(), divider("B"), start()],
+        settings=engine_mod.Settings(section_pause_min=0.7, section_pause_max=0.7,
+                                     cycle_pause_min=0, cycle_pause_max=0,
+                                     failsafe_corner=False))
+    Timed(sequence, dry_run=True).run(max_cycles=1)
+    print(f"Section pause   : waits {waits} on a two-section handover")
+    if 0.7 not in waits:
+        problems.append(f"no section pause was waited: {waits}")
+    return problems
+
+
+def _check_click_box() -> list[str]:
+    """A click box must land inside itself, and not on the same pixel twice."""
+    box = [400, 300, 200, 100]
+    clicks: list[tuple[int, int]] = []
+
+    class Watching(engine_mod.Engine):
+        def _click(self, x, y, step, what):
+            clicks.append((x, y))
+
+    step = {"type": "click_box", "name": "anywhere", "enabled": True,
+            "box": box, "clicks": 1, "button": "left"}
+    runner = Watching(engine_mod.Sequence(name="box", steps=[step]), dry_run=True)
+    for _ in range(60):
+        runner.run_step(step)
+
+    left, top, width, height = box
+    problems = []
+    outside = [c for c in clicks
+               if not (left <= c[0] < left + width and top <= c[1] < top + height)]
+    print(f"Click box       : {len(set(clicks))} distinct spots in {len(clicks)} "
+          f"clicks, all inside {width}x{height}")
+    if outside:
+        problems.append(f"{len(outside)} clicks landed outside the box: {outside[:3]}")
+    if len(set(clicks)) < 20:
+        problems.append(f"only {len(set(clicks))} distinct spots in 60 clicks - "
+                        "the randomness is not working")
+    if runner.last_match not in clicks:
+        problems.append("the box click did not leave a last match to build on")
+
+    # No box picked: say so rather than clicking 0,0.
+    if Watching(engine_mod.Sequence(name="box", steps=[]), dry_run=True)._do_click_box(
+            {"type": "click_box"}) != "timeout":
+        problems.append("a click box with no box set did not report a problem")
     return problems
 
 
