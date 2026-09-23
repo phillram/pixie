@@ -118,6 +118,14 @@ _ANCHOR_HINT = (
 # Which patch to use when several match at once. The list itself comes from
 # the matcher, so the dropdown cannot offer an order it does not implement.
 PICK_ORDERS = screen.PICK_ORDERS
+REACH_SIDES = screen.REACH_SIDES
+REACH_LABELS = {
+    "any": "anywhere in the area is fine",
+    "bottom": "it must run off the bottom",
+    "top": "it must run off the top",
+    "left": "it must run off the left side",
+    "right": "it must run off the right side",
+}
 PICK_LABELS = {
     "largest": "the biggest one",
     "leftmost": "the one furthest left",
@@ -135,6 +143,7 @@ CHOICE_LABELS: dict[str, dict[str, str]] = {
     "mode": COLOR_MODE_LABELS,
     "match": COLOR_MATCH_LABELS,
     "pick": PICK_LABELS,
+    "must_reach": REACH_LABELS,
     "anchor": ANCHOR_LABELS,
 }
 # What the chosen value actually means, shown under the dropdown.
@@ -205,6 +214,17 @@ _JOIN_ACROSS_HINT = (
     "Start at 0. The two sides of one outline are a card's width apart and "
     "were never going to join sideways anyway; they join through the bar "
     "above them."
+)
+_REACH_HINT = (
+    "Where something sits is often the steadiest thing about it.\n"
+    "A hand of cards is always at the bottom of the screen, however many "
+    "cards are in it and whatever angle they fan to, so every card's glow "
+    "runs off the bottom of an area drawn over the hand. A lit prop in the "
+    "background never does. Neither does a reflection, a lamp or a beam.\n"
+    "That holds when nothing about the color does: it survives a change of "
+    "background, a bigger hand, and cards tilted every which way. If your "
+    "target is cut off by the edge of the area on purpose, say so here and "
+    "everything that is not gets dropped for free."
 )
 _SIZE_HINT = (
     "Ignore anything smaller than this. Two numbers, because the thing that "
@@ -422,6 +442,8 @@ STEP_TYPES: dict[str, StepType] = {
                   minimum=0, maximum=4000, hint=_SIZE_HINT),
             Field("min_height", "integer", "Patch at least this tall (px)", 0,
                   minimum=0, maximum=4000, hint=_SIZE_HINT),
+            Field("must_reach", "choice", "Must run off the edge", "any",
+                  choices=REACH_SIDES, hint=_REACH_HINT),
             Field("pick", "choice", "If several match, use", "largest",
                   choices=PICK_ORDERS, hint=_PICK_HINT),
             Field("timeout", "number", "Give up after (s)", 30.0, hint=_TIMEOUT_HINT),
@@ -461,6 +483,8 @@ STEP_TYPES: dict[str, StepType] = {
                   minimum=0, maximum=4000, hint=_SIZE_HINT),
             Field("min_height", "integer", "Patch at least this tall (px)", 0,
                   minimum=0, maximum=4000, hint=_SIZE_HINT),
+            Field("must_reach", "choice", "Must run off the edge", "any",
+                  choices=REACH_SIDES, hint=_REACH_HINT),
             Field("pick", "choice", "If several match, use", "largest",
                   choices=PICK_ORDERS, hint=_PICK_HINT),
             Field("timeout", "number", "Give it this long (s)", 1.0,

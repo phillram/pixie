@@ -116,6 +116,7 @@ def main() -> int:
     failures.extend(_check_the_shape_split_is_suggested())
     failures.extend(_check_specks_are_dropped_before_joining())
     failures.extend(_check_joining_sideways_is_its_own_distance())
+    failures.extend(_check_where_a_patch_sits_can_be_required())
     failures.extend(_check_a_section_with_nothing_switched_on())
     failures.extend(_check_every_wait_respects_the_cap())
     failures.extend(_check_declared_defaults())
@@ -914,6 +915,81 @@ def _check_a_mostly_hidden_outline() -> list[str]:
     if any(piece.height >= 90 for piece in in_pieces):
         print(f"                  (tallest loose piece "
               f"{max(p.height for p in in_pieces)}px)")
+    return problems
+
+
+def _check_where_a_patch_sits_can_be_required() -> list[str]:
+    """Position survives what color cannot.
+
+    The cards fan wider with a bigger hand and tilt every which way, so their
+    size, their angle and the gaps between them all move. What does not move
+    is that a hand sits at the bottom of the screen: every card runs off the
+    bottom edge, so every card's glow reaches the bottom of an area drawn over
+    the hand. A lit prop in the background never does, whatever color it is.
+
+    This is the one discriminator that holds when the background changes,
+    which is why it is worth having as a setting rather than as more tuning.
+    """
+    from pixie.system import screen as screen_mod
+
+    def hsv(h, s, v):
+        return tuple(int(c) for c in cv2.cvtColor(
+            np.array([[[h, s, v]]], dtype=np.uint8), cv2.COLOR_HSV2BGR)[0, 0])
+
+    glow = hsv(90, 250, 250)
+    frame = np.zeros((313, 1600, 3), dtype=np.uint8)
+    # A lit prop, floating in the background: card-sized, card-colored, and
+    # nowhere near the bottom. Every size and color limit would pass it.
+    frame[30:250, 100:600] = glow
+    # Two cards at different angles, as a fan gives them, both running off
+    # the bottom of the area the way a hand always does.
+    for top, left in ((40, 800), (12, 1180)):
+        frame[top:313, left : left + 260] = glow
+
+    original = screen_mod.grab
+    screen_mod.grab = lambda _region=None: frame
+    try:
+        common = dict(region=(0, 0, 1600, 313), target_rgb=(37, 254, 254),
+                      tolerance=14, min_pixels=39, match="hue", order="leftmost")
+        anywhere = screen_mod.find_colors(**common)
+        grounded = screen_mod.find_colors(must_reach="bottom", **common)
+        _, rejected, _ = screen_mod._search(
+            (0, 0, 1600, 313), (37, 254, 254), 14, 39, "hue",
+            order="leftmost", must_reach="bottom")
+    finally:
+        screen_mod.grab = original
+
+    problems = []
+    print(f"Must reach edge : {len(anywhere)} patches anywhere, "
+          f"{len(grounded)} that run off the bottom")
+
+    if len(anywhere) != 3:
+        problems.append(f"the sample gave {len(anywhere)} patches, expected 3")
+        return problems
+    if anywhere[0].left != 100:
+        problems.append("the floating prop was not the leftmost, so this test "
+                        "is not reproducing the problem it is about")
+    if len(grounded) != 2:
+        problems.append(f"requiring the bottom left {len(grounded)} patches, "
+                        "expected the two cards")
+        return problems
+    if grounded[0].left != 800:
+        problems.append(f"the leftmost survivor starts at {grounded[0].left}, "
+                        "expected the leftmost card at 800")
+    print(f"                  leftmost is now the card at {grounded[0].left}, "
+          f"not the prop at {anywhere[0].left}")
+
+    # Rejections say why, so What matches? can show it rather than a patch
+    # silently vanishing.
+    if not any("does not reach the bottom" in why for _, why in rejected):
+        problems.append(f"the prop was dropped without saying why: "
+                        f"{[why for _, why in rejected]}")
+
+    # Cards of different heights and angles all still qualify, because all of
+    # them touch the bottom. That is the whole point.
+    if {hit.height for hit in grounded} == {grounded[0].height}:
+        problems.append("both cards came out the same height, so this is not "
+                        "testing that differing angles all still qualify")
     return problems
 
 

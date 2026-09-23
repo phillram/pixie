@@ -185,6 +185,12 @@ class ColorHit:
     # actually on screen, and its edges belong to whichever piece happens to
     # sit furthest out -- which may not be part of the thing you are after.
     pieces: int = 1
+    # Every edge of the search area this patch runs into, whether or not that
+    # is a problem. Where something sits is often the steadiest thing about
+    # it: a hand of cards is always at the bottom of the screen however the
+    # cards fan or tilt, so a card's glow always reaches the bottom of an area
+    # drawn over the hand, and a lit prop in the background never does.
+    reaches: str = ""
 
     @property
     def center(self) -> tuple[int, int]:
@@ -231,6 +237,11 @@ def _hue_mask(patch: np.ndarray, target_rgb: tuple[int, int, int],
 # one to report. The engine and the GUI both take their list from here.
 PICK_ORDERS = ("largest", "leftmost", "rightmost", "topmost", "bottommost")
 
+# An edge of the search area a patch can be required to run into. "any" asks
+# nothing. The list lives here so the dropdown cannot offer a side the matcher
+# does not check.
+REACH_SIDES = ("any", "bottom", "top", "left", "right")
+
 # How close to the edge of the screen counts as being at it.
 EDGE_SLACK = 4
 # How many pixels in from an edge still count as "on" that edge, when working
@@ -263,6 +274,7 @@ def _search(
     min_height: int = 0,
     min_piece: int = 0,
     join_across: int | None = None,
+    must_reach: str = "any",
 ) -> tuple[list[ColorHit], list[tuple[ColorHit, str]], np.ndarray]:
     """Everything the search knows: what passed, what did not and why, and the mask.
 
@@ -400,28 +412,38 @@ def _search(
          left_y, right_y, top_x, bottom_x, pieces) in blobs:
         left = region[0] + blob_left
         top = region[1] + blob_top
-        # Only count an edge as a crop if moving the search area could
-        # actually help. An area that already reaches the edge of the screen
-        # cannot be widened, so saying "widen the area" there is noise.
-        # A few pixels of slack: an area dragged to "the bottom of the
-        # screen" lands a pixel or two short of it, and warning that such an
-        # area could be widened is a lie you cannot act on.
-        touching = []
-        if blob_left <= 0 and region[0] > desktop_left + EDGE_SLACK:
-            touching.append("left")
-        if blob_top <= 0 and region[1] > desktop_top + EDGE_SLACK:
-            touching.append("top")
-        if (blob_left + width >= region[2]
-                and region[0] + region[2] < desktop_right - EDGE_SLACK):
-            touching.append("right")
-        if (blob_top + height >= region[3]
-                and region[1] + region[3] < desktop_bottom - EDGE_SLACK):
-            touching.append("bottom")
+        # Which edges of the search area the patch runs into, and separately,
+        # which of those are worth complaining about. They are different
+        # questions: a hand of cards runs off the bottom of the screen on
+        # purpose, so every card's glow reaches the bottom of any area drawn
+        # over it -- which is a fact worth *matching on*, and never a fault.
+        reaches = []
+        if blob_left <= 0:
+            reaches.append("left")
+        if blob_top <= 0:
+            reaches.append("top")
+        if blob_left + width >= region[2]:
+            reaches.append("right")
+        if blob_top + height >= region[3]:
+            reaches.append("bottom")
+
+        # A patch cut off by an edge is a fragment of something bigger -- but
+        # only when moving the area could have shown more of it. An area that
+        # already reaches the edge of the screen cannot be widened, so saying
+        # "widen the area" there is a lie you cannot act on.
+        room = {
+            "left": region[0] > desktop_left + EDGE_SLACK,
+            "top": region[1] > desktop_top + EDGE_SLACK,
+            "right": region[0] + region[2] < desktop_right - EDGE_SLACK,
+            "bottom": region[1] + region[3] < desktop_bottom - EDGE_SLACK,
+        }
+        touching = [side for side in reaches if room[side]]
         hit = ColorHit(left + width // 2, top + height // 2,
                        left, top, width, height, area,
                        left_y=region[1] + left_y, right_y=region[1] + right_y,
                        top_x=region[0] + top_x, bottom_x=region[0] + bottom_x,
-                       clipped=" and ".join(touching), pieces=pieces)
+                       clipped=" and ".join(touching), pieces=pieces,
+                       reaches=" and ".join(reaches))
         # Why a patch is not the thing we are looking for, kept as words so
         # the GUI can show it rather than leaving you to guess.
         if area < min_pixels:
@@ -430,6 +452,9 @@ def _search(
             turned_down.append((hit, f"{width}px wide, under {min_width}"))
         elif height < min_height:
             turned_down.append((hit, f"{height}px tall, under {min_height}"))
+        elif must_reach not in ("", "any") and must_reach not in reaches:
+            turned_down.append((hit, f"does not reach the {must_reach} of the "
+                                     "area"))
         else:
             hits.append(hit)
     return hits, turned_down, mask
@@ -449,11 +474,13 @@ def find_colors(
     min_height: int = 0,
     min_piece: int = 0,
     join_across: int | None = None,
+    must_reach: str = "any",
 ) -> list[ColorHit]:
     """Every patch of `target_rgb` inside `region`, in the order asked for."""
     return _search(region, target_rgb, tolerance, min_pixels, match,
                    min_saturation, min_brightness, order, join,
-                   min_width, min_height, min_piece, join_across)[0]
+                   min_width, min_height, min_piece, join_across,
+                   must_reach)[0]
 
 
 @dataclass(frozen=True)
@@ -620,6 +647,7 @@ def explain_colors(
     min_height: int = 0,
     min_piece: int = 0,
     join_across: int | None = None,
+    must_reach: str = "any",
 ) -> tuple[np.ndarray, list[tuple[ColorHit, str]], list[tuple[ColorHit, str]]]:
     """A picture of what matched, plus the patches kept and the ones dropped.
 
@@ -631,7 +659,7 @@ def explain_colors(
     kept, dropped, mask = _search(region, target_rgb, tolerance, min_pixels,
                                   match, min_saturation, min_brightness, order,
                                   join, min_width, min_height, min_piece,
-                                  join_across)
+                                  join_across, must_reach)
 
     picture = grab(region).copy()
     # How saturated each patch actually is. This is the number that separates
@@ -686,11 +714,13 @@ def find_color(
     min_height: int = 0,
     min_piece: int = 0,
     join_across: int | None = None,
+    must_reach: str = "any",
 ) -> ColorHit | None:
     """The one patch of `target_rgb` that `order` puts first. See find_colors."""
     hits = find_colors(region, target_rgb, tolerance, min_pixels, match,
                        min_saturation, min_brightness, order, join,
-                       min_width, min_height, min_piece, join_across)
+                       min_width, min_height, min_piece, join_across,
+                       must_reach)
     return hits[0] if hits else None
 
 

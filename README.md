@@ -23,6 +23,8 @@ Windows only. Dark themed.
   condition stops matching
 * Indent steps under a check, so a group of actions only runs when that check
   finds what it is looking for
+* Tell a match apart from the background by where it sits, not only by its
+  color: require it to run off a given edge of the search area
 
 Every pause can be a range rather than a fixed number, so the timing varies.
 Steps, sections and whole cycles each get their own, so you can have a delay
@@ -425,6 +427,40 @@ way.
 A sequence saved before this setting existed inherits the old distance in both
 directions, so it behaves exactly as it did until you change it.
 
+### Where it sits beats what color it is
+
+Color is the weakest thing you have. Size and shape are better. **Position is
+the best of the lot**, when the thing you want has one.
+
+A hand of cards fans wider as it grows and every card tilts differently, so
+their size, their angle and the gaps between them all move about. What never
+moves is that a hand sits at the bottom of the screen: every card runs off the
+bottom edge. So every card's glow reaches the bottom of an area drawn over the
+hand, and a lit prop in the background does not - whatever color it is, and
+whatever the playmat behind it looks like.
+
+`Must run off the edge` says so:
+
+```
+Must run off the edge   it must run off the bottom
+```
+
+Anything that does not reach that edge of the search area is dropped, and says
+why:
+
+```
+Ignored (1):
+  500x220 at 100, 30   does not reach the bottom of the area
+```
+
+This is the one test that survives a change of background, because it is not
+about the background at all.
+
+It is not a substitute for the size limits, though - the two catch different
+things. A vertical beam running the full height of the screen *does* reach the
+bottom, so only `Patch at least this wide` drops it. A prop floating above the
+hand is the right shape but the wrong place, so only this drops it. Set both.
+
 ### What joining costs when the intruder is real
 
 Joining sweeps up *anything* of the same color within reach, not only pieces
@@ -560,7 +596,8 @@ Work in this order, because each step depends on the one before:
 3. **Join pieces up and down** to pull that thing's fragments together,
    leaving **side to side** at 0 unless something genuinely needs it
 4. **Patch at least this wide / tall** to drop any streaks that survive
-5. **If several match** to choose between the real candidates
+5. **Must run off the edge** to drop anything in the wrong part of the screen
+6. **If several match** to choose between the real candidates
 
 The first three come before the rest because joining a dirty mask glues the
 mess together, and everything after joining is measured on whatever came out

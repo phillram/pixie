@@ -500,6 +500,7 @@ class Engine:
             order=self._value(step, "pick", "largest"),
             join=int(self._value(step, "join", 0)),
             join_across=int(self._value(step, "join_across", 0)),
+            must_reach=str(self._value(step, "must_reach", "any")),
             min_width=int(self._value(step, "min_width", 0)),
             min_height=int(self._value(step, "min_height", 0)),
             min_piece=int(self._value(step, "min_piece", 0)),
