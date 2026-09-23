@@ -826,8 +826,10 @@ def check_what_matches_window():
     original = screen_mod.grab
     screen_mod.grab = lambda _region=None: frame
     try:
+        # Away from the edges of the screen, or a patch touching the edge of
+        # the area is the monitor's doing and is deliberately not flagged.
         picture, kept, dropped = screen_mod.explain_colors(
-            (0, 0, 900, 300), (37, 254, 254), tolerance=14, min_pixels=39,
+            (500, 500, 900, 300), (37, 254, 254), tolerance=14, min_pixels=39,
             match="hue", order="leftmost", join=20)
     finally:
         screen_mod.grab = original
