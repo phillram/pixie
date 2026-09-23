@@ -528,17 +528,11 @@ def _check_a_near_miss_reports_its_score() -> list[str]:
         engine_mod.Sequence(name="scores"),
         emit=lambda event: said.append(str(event.get("message", ""))))
 
-    template = np.zeros((20, 20, 3), dtype=np.uint8)
     problems = []
     for score, expected in ((0.82, "Lower"), (0.31, "nothing like it"),
                             (0.60, "recapture")):
         said.clear()
-        original = screen.best_score
-        screen.best_score = lambda *_a, **_k: score
-        try:
-            runner._how_close(template, None, 0.85)
-        finally:
-            screen.best_score = original
+        runner._how_close(score, 0.85)
         if not said:
             problems.append(f"a best score of {score} was not reported at all")
         elif f"{score:.2f}" not in said[0] or expected not in said[0]:
@@ -547,16 +541,31 @@ def _check_a_near_miss_reports_its_score() -> list[str]:
     print("Near miss       : 0.82 -> lower the threshold, 0.31 -> wrong "
           "picture, 0.60 -> recapture")
 
-    # A diagnostic must never become the failure it is diagnosing.
-    said.clear()
-    original = screen.best_score
-    screen.best_score = lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("no"))
+    # The score has to come from the look that just failed, not a second one:
+    # a step whose picture is never there pays for it on every single pass.
+    import inspect
+    if "best_score" in inspect.getsource(runner._find):
+        problems.append("_find searches a second time just to report a score")
+
+    # And the failing look really does hand its score back.
+    # Two different patterns, so the correlation is meaningful rather than
+    # the degenerate case of one flat image against another.
+    dice = np.random.default_rng(1)
+    picture = dice.integers(0, 255, (40, 40, 3), dtype=np.uint8)
+    elsewhere = dice.integers(0, 255, (160, 160, 3), dtype=np.uint8)
+    original = screen.grab
+    screen.grab = lambda _region=None: elsewhere
     try:
-        runner._how_close(template, None, 0.85)
+        match, score = screen.match_template(picture, None, 0.85)
     finally:
-        screen.best_score = original
-    if said:
-        problems.append(f"a broken diagnostic said something anyway: {said}")
+        screen.grab = original
+    if match is not None:
+        problems.append(f"noise matched different noise at 0.85 ({score:.2f})")
+    elif not 0.0 <= score < 0.85:
+        problems.append(f"a failed match reported a score of {score}")
+    else:
+        print(f"                  a failed look still hands back its score "
+              f"({score:.2f}), at no extra cost")
     return problems
 
 

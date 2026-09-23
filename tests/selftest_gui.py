@@ -1236,6 +1236,52 @@ def check_indenting_steps():
     return problems
 
 
+def check_no_hidden_keybinds():
+    """The window answers to the declared shortcuts and nothing else.
+
+    There used to be an F5 in here that started the run. Nothing mentioned it,
+    Settings did not list it, and the only way to discover it was to press it
+    and watch your screen start being clicked. A key that begins clicking has
+    no business being undocumented.
+
+    So the bindings are made from one table, and this fails if the window has
+    picked up anything that is not in it.
+    """
+    problems = []
+    # Tk answers with its own spelling - <Control-s> comes back as
+    # <Control-Key-s> - so both sides are compared in the same one.
+    def plain(name):
+        return str(name).replace("Key-", "")
+
+    declared = {plain(sequence) for sequence, _method, _what in gui.SHORTCUTS}
+    # Tk reports every binding on the toplevel, including the ones that are
+    # not keys at all.
+    bound = {plain(name) for name in root.bind()}
+    events = {name for name in bound if name.startswith("<Key") or
+              any(part in name for part in ("Control-", "Alt-", "F1", "F2", "F3",
+                                            "F4", "F5", "F6", "F7", "F8", "F9",
+                                            "F10", "F11", "F12"))}
+    extra = events - declared
+    if extra:
+        problems.append(f"the window answers to keys nothing declares: {sorted(extra)}")
+    missing = declared - bound
+    if missing:
+        problems.append(f"declared shortcuts that are not bound: {sorted(missing)}")
+
+    # Nothing in the table may start or stop a run - that is the global
+    # hotkey's job, and it is in Settings where it can be seen and changed.
+    for sequence, method, _what in gui.SHORTCUTS:
+        if method in ("toggle_run", "start", "stop"):
+            problems.append(f"{sequence} runs the sequence; that belongs to the "
+                            "start/stop key in Settings")
+        if not hasattr(app, method):
+            problems.append(f"{sequence} points at missing App.{method}")
+
+    print(f"Keybinds ok: {len(declared)} declared, none hidden, none of them "
+          "start a run")
+    return problems
+
+
 def check_moving_keeps_groups_together():
     """Nudging a step must not quietly ungroup it."""
     problems = []
@@ -1481,7 +1527,8 @@ for check in (check_boxes_can_be_typed_into, check_panes_can_be_dragged,
               check_window_size_is_remembered,
               check_settings_stick, check_add_menu_is_grouped,
               check_indenting_steps,
-              check_moving_keeps_groups_together):
+              check_moving_keeps_groups_together,
+              check_no_hidden_keybinds):
     try:
         failures.extend(check())
     except Exception as error:  # noqa: BLE001

@@ -134,6 +134,21 @@ Every box you can type in takes the editing keys you would expect:
 | Ctrl+A | Select everything in the box |
 | Ctrl+D | Duplicate the selected step, even from inside a field |
 
+And the window itself answers to these, and to nothing else:
+
+| Key | What it does |
+| --- | --- |
+| Ctrl+S | Save the sequence |
+| Ctrl+O | Open a sequence |
+| Ctrl+D | Duplicate the selected step |
+| Ctrl+Right | Indent the selected step under the one above |
+| Ctrl+Left | Move the selected step back out |
+
+**None of them start or stop a run.** That is the start/stop key in Settings,
+which is a global hotkey precisely so it works when Pixie is not in front. The
+list lives in `SHORTCUTS` in `pixie/ui/app.py`, the bindings are made from it,
+and a test fails if the window answers to a key that is not in it.
+
 Tk, which Pixie's window is built on, leaves these out and binds Ctrl+A to
 "go to the start of the line" instead. Shift+Delete is left alone, because it
 has meant Cut for longer than any of this.

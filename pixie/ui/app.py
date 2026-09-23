@@ -31,6 +31,25 @@ from pixie.ui import theme
 from pixie.paths import (APP_DIR as PROJECT_DIR, APP_NAME, ICON_PATH, IMAGES_DIR,
                    SEQUENCES_DIR, STATE_PATH, ensure_dirs)
 
+# Every key the window itself answers to, and what it does. Editing keys
+# inside a text box are separate and live in editing.py.
+#
+# This is the whole list, and it is the list, not a copy of one: the bindings
+# are made from it, the README quotes it and a test fails if the window has a
+# binding that is not here. There used to be an F5 in the code that started
+# the run, which nothing mentioned anywhere and nobody asked for -- a key that
+# begins clicking your screen should not be discoverable only by pressing it.
+#
+# Nothing here starts or stops a run. That is the start/stop key in Settings,
+# which is a global hotkey precisely so it works when Pixie is not in front.
+SHORTCUTS: tuple[tuple[str, str, str], ...] = (
+    ("<Control-s>", "save", "Save the sequence"),
+    ("<Control-o>", "open", "Open a sequence"),
+    ("<Control-d>", "duplicate", "Duplicate the selected step"),
+    ("<Control-Right>", "indent", "Indent the selected step under the one above"),
+    ("<Control-Left>", "outdent", "Move the selected step back out"),
+)
+
 LOG_COLORS = {"info": theme.FG, "warn": theme.WARN, "error": theme.ERROR,
               "good": theme.OK, "muted": theme.MUTED}
 
@@ -583,12 +602,8 @@ class App:
         editing.install(root)
 
         root.protocol("WM_DELETE_WINDOW", self.on_close)
-        root.bind("<Control-s>", lambda _e: self.save())
-        root.bind("<Control-o>", lambda _e: self.open())
-        root.bind("<Control-d>", lambda _e: self.duplicate())
-        root.bind("<Control-Right>", lambda _e: self.indent())
-        root.bind("<Control-Left>", lambda _e: self.outdent())
-        root.bind("<F5>", lambda _e: self.toggle_run())
+        for sequence, method, _what in SHORTCUTS:
+            root.bind(sequence, lambda _e, name=method: getattr(self, name)())
         root.bind("<Configure>", self._watch_geometry)
 
         state = self._read_state()

@@ -96,12 +96,20 @@ def load_template(path: str | Path) -> np.ndarray:
     return template
 
 
-def find_template(
+def match_template(
     template: np.ndarray,
     region: Region | None = None,
     confidence: float = 0.85,
-) -> Match | None:
-    """Find the single best match for `template`, or None if nothing scores high enough."""
+) -> tuple[Match | None, float]:
+    """The best match for `template`, and how well the best candidate scored.
+
+    The score comes back whether or not it cleared `confidence`, because "it
+    did not appear" reads the same for a near miss and for the wrong picture
+    entirely -- and the number that tells them apart has already been
+    computed by the time we know it failed. Throwing it away only to work it
+    out again costs a second pass over the whole area, on a step that is
+    usually failing on every single loop.
+    """
     screen = grab(region)
     t_h, t_w = template.shape[:2]
     s_h, s_w = screen.shape[:2]
@@ -113,10 +121,19 @@ def find_template(
     result = cv2.matchTemplate(screen, template, cv2.TM_CCOEFF_NORMED)
     _, score, _, (loc_x, loc_y) = cv2.minMaxLoc(result)
     if score < confidence:
-        return None
+        return None, float(score)
 
     off_x, off_y = (region[0], region[1]) if region else virtual_bounds()[:2]
-    return Match(loc_x + off_x, loc_y + off_y, t_w, t_h, float(score))
+    return Match(loc_x + off_x, loc_y + off_y, t_w, t_h, float(score)), float(score)
+
+
+def find_template(
+    template: np.ndarray,
+    region: Region | None = None,
+    confidence: float = 0.85,
+) -> Match | None:
+    """The best match for `template`, or None if nothing scores high enough."""
+    return match_template(template, region, confidence)[0]
 
 
 def best_score(template: np.ndarray, region: Region | None = None) -> float:

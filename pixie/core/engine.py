@@ -492,26 +492,30 @@ class Engine:
         region = self._region(step.get("region"))
         confidence = float(self._value(step, "confidence", 0.85))
         name = Path(step["image"]).name
-        match = self._poll_until(
-            lambda: screen.find_template(template, region, confidence), timeout, name)
+        # Keep the score from the last look rather than searching again to
+        # find it. A step whose picture is never there pays this on every
+        # pass, so the diagnostic has to be free.
+        seen = [0.0]
+
+        def look():
+            match, score = screen.match_template(template, region, confidence)
+            seen[0] = score
+            return match
+
+        match = self._poll_until(look, timeout, name)
         if match is None:
-            self._how_close(template, region, confidence)
+            self._how_close(seen[0], confidence)
         return match
 
-    def _how_close(self, template, region, confidence: float) -> None:
+    def _how_close(self, score: float, confidence: float) -> None:
         """Say how well the picture did match, when it did not match enough.
 
         "It did not appear" is the same sentence whether the picture was a
         hair under the threshold or nothing like what is on screen, and those
         want opposite fixes: one wants the confidence nudged down, the other
         wants a different picture entirely. The score tells them apart at a
-        glance, and costs one extra comparison on a path that has already
-        given up and spent its whole timeout.
+        glance, and comes from the look that just failed, so it is free.
         """
-        try:
-            score = screen.best_score(template, region)
-        except Exception:  # noqa: BLE001 - a diagnostic must never be the fault
-            return
         note = f"    the best match anywhere in that area scored {score:.2f}"
         if score >= confidence - 0.06:
             note += (f", just under the {confidence:g} it needs. Lower "
