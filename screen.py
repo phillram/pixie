@@ -1,0 +1,282 @@
+"""Screen capture, template matching and color sampling.
+
+All coordinates are absolute virtual-desktop pixels, so they work across
+multiple monitors (including ones positioned left of or above the primary,
+which give negative coordinates).
+"""
+
+from __future__ import annotations
+
+import ctypes
+from dataclasses import dataclass
+from pathlib import Path
+
+import cv2
+import mss
+import numpy as np
+
+Region = tuple[int, int, int, int]  # left, top, width, height
+
+_session: mss.base.MSSBase | None = None
+
+
+def set_dpi_aware() -> None:
+    """Report true physical pixels so our coordinates match what mss sees.
+
+    Without this, Windows lies about screen size on scaled displays and every
+    click lands in the wrong place.
+    """
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)  # per-monitor aware
+        return
+    except (AttributeError, OSError):
+        pass
+    try:
+        ctypes.windll.user32.SetProcessDPIAware()
+    except (AttributeError, OSError):
+        pass
+
+
+def _sct() -> mss.base.MSSBase:
+    global _session
+    if _session is None:
+        _session = mss.mss()
+    return _session
+
+
+def virtual_bounds() -> Region:
+    """The bounding box of every monitor combined."""
+    m = _sct().monitors[0]
+    return m["left"], m["top"], m["width"], m["height"]
+
+
+def primary_bounds() -> Region:
+    """The primary monitor alone, not the whole multi-monitor desktop."""
+    m = _sct().monitors[1]
+    return m["left"], m["top"], m["width"], m["height"]
+
+
+def primary_center() -> tuple[int, int]:
+    """Middle of the primary monitor.
+
+    Deliberately not the middle of the virtual desktop -- on a multi-monitor
+    setup that lands on the seam between two screens, which is nowhere useful.
+    """
+    left, top, width, height = primary_bounds()
+    return left + width // 2, top + height // 2
+
+
+def grab(region: Region | None = None) -> np.ndarray:
+    """Capture the whole virtual desktop, or `region`, as a BGR image."""
+    left, top, width, height = region if region else virtual_bounds()
+    shot = _sct().grab({"left": left, "top": top, "width": width, "height": height})
+    return cv2.cvtColor(np.asarray(shot), cv2.COLOR_BGRA2BGR)
+
+
+@dataclass(frozen=True)
+class Match:
+    """Where a template was found, in absolute screen coordinates."""
+
+    x: int
+    y: int
+    width: int
+    height: int
+    score: float
+
+    @property
+    def center(self) -> tuple[int, int]:
+        return self.x + self.width // 2, self.y + self.height // 2
+
+
+def load_template(path: str | Path) -> np.ndarray:
+    template = cv2.imread(str(path), cv2.IMREAD_COLOR)
+    if template is None:
+        raise FileNotFoundError(f"Could not read template image: {path}")
+    return template
+
+
+def find_template(
+    template: np.ndarray,
+    region: Region | None = None,
+    confidence: float = 0.85,
+) -> Match | None:
+    """Find the single best match for `template`, or None if nothing scores high enough."""
+    screen = grab(region)
+    t_h, t_w = template.shape[:2]
+    s_h, s_w = screen.shape[:2]
+    if t_h > s_h or t_w > s_w:
+        raise ValueError(
+            f"Template ({t_w}x{t_h}) is larger than the search area ({s_w}x{s_h})"
+        )
+
+    result = cv2.matchTemplate(screen, template, cv2.TM_CCOEFF_NORMED)
+    _, score, _, (loc_x, loc_y) = cv2.minMaxLoc(result)
+    if score < confidence:
+        return None
+
+    off_x, off_y = (region[0], region[1]) if region else virtual_bounds()[:2]
+    return Match(loc_x + off_x, loc_y + off_y, t_w, t_h, float(score))
+
+
+def best_score(template: np.ndarray, region: Region | None = None) -> float:
+    """Best match score regardless of threshold - useful when tuning confidence."""
+    result = cv2.matchTemplate(grab(region), template, cv2.TM_CCOEFF_NORMED)
+    return float(cv2.minMaxLoc(result)[1])
+
+
+def sample_pixels(x: int, y: int, radius: int = 0) -> np.ndarray:
+    """RGB pixels in the square of side 2*radius+1 centered on (x, y)."""
+    size = radius * 2 + 1
+    patch = grab((x - radius, y - radius, size, size))
+    return cv2.cvtColor(patch, cv2.COLOR_BGR2RGB).reshape(-1, 3)
+
+
+def pixel_color(x: int, y: int) -> tuple[int, int, int]:
+    r, g, b = sample_pixels(x, y)[0]
+    return int(r), int(g), int(b)
+
+
+def color_present(
+    x: int,
+    y: int,
+    target_rgb: tuple[int, int, int],
+    tolerance: float = 30.0,
+    radius: int = 3,
+    mode: str = "any",
+) -> bool:
+    """Is `target_rgb` showing at (x, y)?
+
+    `tolerance` is a straight-line distance in RGB space, so 0 is an exact
+    match and ~441 would match anything. `mode` is "any" (any pixel in the
+    sampled square matches) or "mean" (the square's average color matches).
+    """
+    pixels = sample_pixels(x, y, radius).astype(np.int32)
+    target = np.array(target_rgb, dtype=np.int32)
+    if mode == "mean":
+        return bool(np.linalg.norm(pixels.mean(axis=0) - target) <= tolerance)
+    return bool((np.linalg.norm(pixels - target, axis=1) <= tolerance).any())
+
+
+@dataclass(frozen=True)
+class ColorHit:
+    """A blob of pixels matching a color, in absolute screen coordinates."""
+
+    x: int          # center of the blob's bounding box
+    y: int
+    left: int
+    top: int
+    width: int
+    height: int
+    pixels: int     # how many pixels actually matched
+
+    @property
+    def center(self) -> tuple[int, int]:
+        return self.x, self.y
+
+
+def _rgb_mask(patch: np.ndarray, target_rgb: tuple[int, int, int],
+              tolerance: float) -> np.ndarray:
+    """Pixels within `tolerance` straight-line distance of the target color."""
+    values = patch.astype(np.int32)
+    target_bgr = np.array(target_rgb[::-1], dtype=np.int32)
+    difference = values - target_bgr
+    # Squared distances, to skip a square root over every pixel.
+    return (difference * difference).sum(axis=2) <= tolerance * tolerance
+
+
+def _hue_mask(patch: np.ndarray, target_rgb: tuple[int, int, int],
+              degrees: float, min_saturation: int, min_brightness: int) -> np.ndarray:
+    """Pixels of roughly the same *hue*, whatever their brightness.
+
+    A glow is one color smeared across a brightness gradient -- washed out and
+    near-white at its core, dark at its edges. In RGB those are far apart, so a
+    distance match catches only a slice of it. Hue barely moves across that
+    gradient, which makes it a far steadier thing to match on.
+    """
+    hsv = cv2.cvtColor(patch, cv2.COLOR_BGR2HSV)
+    hue, saturation, value = hsv[:, :, 0], hsv[:, :, 1], hsv[:, :, 2]
+
+    target_hsv = cv2.cvtColor(
+        np.array([[list(target_rgb[::-1])]], dtype=np.uint8), cv2.COLOR_BGR2HSV)
+    target_hue = int(target_hsv[0, 0, 0])
+
+    # OpenCV packs 0-360 degrees into 0-179, so one unit is two degrees.
+    limit = max(1.0, degrees / 2.0)
+    distance = np.abs(hue.astype(np.int16) - target_hue)
+    distance = np.minimum(distance, 180 - distance)  # hue wraps around
+
+    return ((distance <= limit)
+            & (saturation >= min_saturation)
+            & (value >= min_brightness))
+
+
+def find_color(
+    region: Region,
+    target_rgb: tuple[int, int, int],
+    tolerance: float = 40.0,
+    min_pixels: int = 30,
+    match: str = "rgb",
+    min_saturation: int = 90,
+    min_brightness: int = 70,
+) -> ColorHit | None:
+    """Find the largest patch of `target_rgb` inside `region`.
+
+    Built for things like a glowing highlight around an item: the glow keeps
+    its color even when whatever it surrounds changes, so we look for the
+    color and report the center of the box it encloses.
+
+    `match` is "rgb" (within `tolerance` of the exact color) or "hue" (the same
+    hue give or take `tolerance` degrees, at any brightness). Use "hue" for
+    anything that glows or pulses.
+
+    Returns None if no blob has at least `min_pixels` matching pixels, which
+    keeps stray anti-aliased pixels from counting as a hit.
+    """
+    patch = grab(region)
+    if match == "hue":
+        within = _hue_mask(patch, target_rgb, tolerance,
+                           min_saturation, min_brightness)
+    else:
+        within = _rgb_mask(patch, target_rgb, tolerance)
+
+    mask = within.astype(np.uint8)
+    if not mask.any():
+        return None
+
+    # Largest connected blob, so two separate glows don't average into a
+    # meaningless point between them.
+    count, _, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
+    if count < 2:
+        return None
+    largest = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
+    area = int(stats[largest, cv2.CC_STAT_AREA])
+    if area < min_pixels:
+        return None
+
+    left = region[0] + int(stats[largest, cv2.CC_STAT_LEFT])
+    top = region[1] + int(stats[largest, cv2.CC_STAT_TOP])
+    width = int(stats[largest, cv2.CC_STAT_WIDTH])
+    height = int(stats[largest, cv2.CC_STAT_HEIGHT])
+    return ColorHit(left + width // 2, top + height // 2,
+                     left, top, width, height, area)
+
+
+_VK_CODES = {
+    "ESC": 0x1B,
+    "SPACE": 0x20,
+    "PAUSE": 0x13,
+    "SCROLLLOCK": 0x91,
+    **{f"F{n}": 0x6F + n for n in range(1, 13)},
+}
+
+
+def key_pressed(name: str) -> bool:
+    """Is the named key down right now, even if we don't have focus?"""
+    try:
+        vk = _VK_CODES[name.upper()]
+    except KeyError:
+        raise ValueError(
+            f"Unsupported abort key {name!r}. Choose one of: "
+            + ", ".join(sorted(_VK_CODES))
+        ) from None
+    return bool(ctypes.windll.user32.GetAsyncKeyState(vk) & 0x8000)

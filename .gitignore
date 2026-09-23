@@ -1,0 +1,17 @@
+.scratch/
+__pycache__/
+*.pyc
+.venv/
+
+# Your own setup - the example sequence is committed, your live ones are not.
+images/
+sequences/*.json
+!sequences/example.json
+.pixie_state.json
+target_check.png
+
+# Build artifacts - rebuild with `python build_exe.py`
+Pixie.exe
+build/
+dist/
+*.spec

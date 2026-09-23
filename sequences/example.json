@@ -1,0 +1,88 @@
+{
+  "name": "example",
+  "settings": {
+    "abort_key": "F8",
+    "poll_interval": 0.25,
+    "step_pause_min": 0.3,
+    "step_pause_max": 1.5,
+    "cycle_pause_min": 0.8,
+    "cycle_pause_max": 2.5,
+    "failsafe_corner": true
+  },
+  "steps": [
+    {
+      "type": "wait_for_color_in_area",
+      "name": "1. Wait for the glowing border (however long it takes)",
+      "enabled": true,
+      "region": null,
+      "color": [
+        255,
+        215,
+        0
+      ],
+      "tolerance": 60,
+      "min_pixels": 40,
+      "timeout": 0,
+      "on_timeout": "restart"
+    },
+    {
+      "type": "click_last_match",
+      "name": "2. Double-click just underneath it",
+      "enabled": true,
+      "clicks": 2,
+      "button": "left",
+      "offset": [
+        0,
+        40
+      ]
+    },
+    {
+      "type": "wait_for_color",
+      "name": "3. Did the confirming color appear?",
+      "enabled": true,
+      "pos": null,
+      "color": [
+        255,
+        255,
+        255
+      ],
+      "tolerance": 30,
+      "radius": 3,
+      "mode": "any",
+      "timeout": 5.0,
+      "on_timeout": "restart"
+    },
+    {
+      "type": "click_image",
+      "name": "4. Click the image",
+      "enabled": true,
+      "image": "",
+      "region": null,
+      "confidence": 0.85,
+      "timeout": 10.0,
+      "on_timeout": "restart",
+      "clicks": 1,
+      "button": "left",
+      "offset": [
+        0,
+        0
+      ]
+    },
+    {
+      "type": "press_key",
+      "name": "5. Press Q twice",
+      "enabled": true,
+      "key": "Q",
+      "presses": 2,
+      "interval": 0.12
+    },
+    {
+      "type": "press_key",
+      "name": "6. Press Enter",
+      "enabled": true,
+      "key": "Enter",
+      "presses": 1,
+      "interval": 0.08
+    }
+  ]
+}
