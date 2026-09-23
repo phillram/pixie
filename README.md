@@ -165,10 +165,24 @@ Pixie sits doing nothing:
 
 | If it is not found | What happens |
 | --- | --- |
-| Start the whole sequence again | Back to the very first step of the sequence, not the top of this section |
-| Carry on to the next step anyway | Runs the next step as though this one had worked |
-| Move on to the next section | Leaves this section. This is how a section ends |
-| Stop the run | Same as pressing Stop |
+| Go back to the very first step of the sequence | The whole script starts again. Everything before this step runs a second time |
+| Go back to the first step of this section | Only this section starts again. No other section is touched |
+| Skip it and run the next step anyway | Runs the next step as though this one had worked |
+| Leave this section and start the next one | This is how a section ends |
+| Stop the run completely | Same as pressing Stop |
+
+Pixie spells the difference out underneath the dropdown, using the names of
+your own sections, because the first two are the pair that get mixed up:
+
+```
+Go back to the very first step of the sequence
+    Abandons 'In Game' and starts the whole script again from 'Before Game'.
+    Everything before this step runs a second time.
+
+Go back to the first step of this section
+    Starts 'In Game' again from its own step 1, and does not touch any other
+    section.
+```
 
 `Give up after` is the timeout. It defaults to 30 seconds on a step that waits
 for something, so a section start point left at its default spends 30 seconds
@@ -389,5 +403,24 @@ Nothing in `core` or `system` imports from `ui`, so the engine runs headless.
 
 Adding a step type means one entry in `STEP_TYPES` in `pixie/core/steps.py` and
 one `_do_<key>` method on `Engine`. The GUI builds its editor from the field
-declarations, so it needs no changes. `tools/check_wiring.py` fails if the two
-ever drift apart.
+declarations, so it needs no changes.
+
+### One source for everything
+
+Anything named in two places eventually disagrees with itself, usually where
+nobody is looking. So each of these has exactly one home, and
+`tools/check_wiring.py` fails the build if a copy drifts away from it:
+
+| Thing | Lives in | Checked by |
+| --- | --- | --- |
+| Step types and their fields | `STEP_TYPES` | every type has a `_do_` handler and a full set of defaults |
+| Default values for a field | the `Field` declaration | the engine reads them through `_value`, never its own copy |
+| Which editor draws a field | `App.FIELD_BUILDERS` | every declared kind has one |
+| The "if not found" options | `ON_TIMEOUT_CHOICES` | every option has a branch in `run_cycle`, found by reading the source |
+| Labels for dropdown values | `CHOICE_LABELS` | every choice on every field has one |
+| Keys that can be a hotkey | `screen.hotkey_names()` | the GUI cannot offer a key `key_pressed` would refuse |
+| Where the cursor parks | `engine.PARK_LABELS` | the GUI imports it rather than restating it |
+| Log levels | `engine.LOG_LEVELS` | every level has a color in the GUI |
+
+The rule when adding anything: declare it once, and if a second place needs to
+know about it, make `check_wiring.py` prove they agree.

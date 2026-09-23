@@ -561,10 +561,13 @@ def check_choices_read_as_english():
     from tkinter import ttk
 
     problems = []
+    first = dict(step_defs.new_step("section"), name="Before Game")
+    second = dict(step_defs.new_step("section"), name="In Game")
     step = step_defs.new_step("wait_for_image")
-    app.sequence = engine_mod.Sequence(name="choices", steps=[step])
+    app.sequence = engine_mod.Sequence(name="choices",
+                                       steps=[first, second, step])
     app.refresh_list(keep=0)
-    app.selected = 0
+    app.selected = 2
     app.build_editor()
     root.update()
 
@@ -587,15 +590,26 @@ def check_choices_read_as_english():
     if step["on_timeout"] != "next_section":
         problems.append(f"choosing a label stored {step['on_timeout']!r}")
 
-    # The note underneath has to follow the choice, because that is the part
-    # that says "the whole sequence" rather than "this section".
-    notes = [_text_of(w) for w in _descendants(app.editor)]
-    if not any(step_defs.ON_TIMEOUT_NOTES["next_section"][:30] in n for n in notes):
+    # The note underneath follows the choice, and names the real sections, so
+    # "the whole sequence" can never be mistaken for "this section".
+    shown = [_text_of(w) for w in _descendants(app.editor)]
+    expected = step_defs.outcome_note("next_section", app.sequence.steps, 2)
+    if not any(expected in text for text in shown):
         problems.append("the note under the dropdown did not follow the choice")
+    if "In Game" not in expected:
+        problems.append(f"the note does not name the section: {expected!r}")
+    if "{" in expected:
+        problems.append(f"the note still has a placeholder in it: {expected!r}")
 
-    # And a reload must survive the round trip.
-    if engine_mod.Sequence(name="x", steps=[step]).steps[0]["on_timeout"] != "next_section":
-        problems.append("the stored value changed on reload")
+    var.set(step_defs.ON_TIMEOUT_LABELS["restart"])
+    root.update()
+    restart_note = step_defs.outcome_note("restart", app.sequence.steps, 2)
+    if "In Game" not in restart_note or "Before Game" not in restart_note:
+        problems.append(f"'restart' does not name both sections: {restart_note!r}")
+    if not any(restart_note in text for text in
+               [_text_of(w) for w in _descendants(app.editor)]):
+        problems.append("the note did not update when the choice changed")
+    print(f"  restart reads: {restart_note}")
 
     print("Choices ok: dropdowns read as English, files keep the short value")
     return problems

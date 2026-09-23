@@ -91,6 +91,8 @@ def main() -> int:
     failures.extend(_check_sections())
     failures.extend(_check_numbering())
     failures.extend(_check_section_pause())
+    failures.extend(_check_restart_section())
+    failures.extend(_check_max_cycles_is_a_real_limit())
     failures.extend(_check_section_limits())
     failures.extend(_check_declared_defaults())
     failures.extend(_check_click_box())
@@ -270,6 +272,112 @@ def _check_section_pause() -> list[str]:
     return problems
 
 
+def _check_restart_section() -> list[str]:
+    """'Go back to the first step of this section' must do exactly that.
+
+    The discriminator is the step before the first divider: restarting the
+    whole sequence would run it a second time, restarting the section must
+    not touch it.
+    """
+    calls = {"lead": 0, "first": 0, "second": 0, "b": 0}
+    messages: list[str] = []
+
+    class Counting(engine_mod.Engine):
+        def run_step(self, step):
+            tag = step.get("tag")
+            if not tag:
+                return "ok"
+            calls[tag] += 1
+            if tag == "lead" or tag == "b":
+                return "timeout"                 # hands over immediately
+            if tag == "first" and calls["first"] == 3:
+                return "timeout"                 # third time around, give up
+            if tag == "second" and calls["second"] == 1:
+                return "timeout"                 # fails once, restarts section
+            return "ok"
+
+    def step(tag, on_timeout):
+        return {"type": "wait_for_image", "name": tag, "enabled": True,
+                "tag": tag, "image": "x", "on_timeout": on_timeout,
+                "pause": [0, 0]}
+
+    sequence = engine_mod.Sequence(
+        name="restarts",
+        steps=[step("lead", "next_section"),
+               {"type": "section", "name": "A", "enabled": True},
+               step("first", "next_section"),
+               step("second", "restart_section"),
+               {"type": "section", "name": "B", "enabled": True},
+               step("b", "next_section")],
+        settings=engine_mod.Settings(step_pause_min=0, step_pause_max=0,
+                                     section_pause_min=0, section_pause_max=0,
+                                     cycle_pause_min=0, cycle_pause_max=0,
+                                     failsafe_corner=False))
+
+    runner = Counting(sequence, emit=lambda e: messages.append(e.get("message", "")),
+                      dry_run=True)
+    runner.run(max_cycles=1)
+
+    problems = []
+    print(f"Restart section : {calls}")
+    if calls["lead"] != 1:
+        problems.append(f"the step before the first section ran {calls['lead']} "
+                        "times - restarting a section restarted the whole "
+                        "sequence")
+    if calls != {"lead": 1, "first": 3, "second": 2, "b": 1}:
+        problems.append(f"steps ran {calls}, expected "
+                        "{'lead': 1, 'first': 3, 'second': 2, 'b': 1}")
+    if not any("back to the first step of 'A'" in m for m in messages):
+        problems.append("the log did not say which section it went back to")
+
+    # And an unknown value must be reported rather than quietly picking one.
+    noise = engine_mod.Sequence(
+        name="noise", steps=[step("lead", "wibble")],
+        settings=engine_mod.Settings(failsafe_corner=False, cycle_pause_min=0,
+                                     cycle_pause_max=0))
+    said: list[str] = []
+    Counting(noise, emit=lambda e: said.append(e.get("message", "")),
+             dry_run=True).run(max_cycles=1)
+    if not any("wibble" in m and "not something I know" in m for m in said):
+        problems.append("an unknown 'if not found' value was accepted silently")
+    return problems
+
+
+def _check_max_cycles_is_a_real_limit() -> list[str]:
+    """--max-cycles has to stop a sequence that never completes a cycle.
+
+    A step set to 'start over' returns the run to the top without finishing
+    anything. Counting only finished cycles meant the limit was never
+    reached, so an unattended run went round forever.
+    """
+    tries = {"n": 0}
+
+    class Restarting(engine_mod.Engine):
+        def run_step(self, step):
+            tries["n"] += 1
+            return "timeout"          # always fails, always restarts
+
+    sequence = engine_mod.Sequence(
+        name="spinner",
+        steps=[{"type": "wait_for_image", "name": "never", "enabled": True,
+                "image": "x", "on_timeout": "restart", "pause": [0, 0]}],
+        settings=engine_mod.Settings(step_pause_min=0, step_pause_max=0,
+                                     cycle_pause_min=0, cycle_pause_max=0,
+                                     failsafe_corner=False))
+    runner = Restarting(sequence, dry_run=True)
+    runner.run(max_cycles=3)
+
+    problems = []
+    print(f"Max cycles      : {tries['n']} attempts, "
+          f"{runner.cycles_completed} completed")
+    if tries["n"] != 3:
+        problems.append(f"asked for 3 cycles, the step ran {tries['n']} times")
+    if runner.cycles_completed != 0:
+        problems.append(f"counted {runner.cycles_completed} completed cycles, "
+                        "but none ever finished")
+    return problems
+
+
 def _check_section_limits() -> list[str]:
     """A section can cap how long the steps inside it wait."""
     def divider(name, **extra):
@@ -297,7 +405,7 @@ def _check_section_limits() -> list[str]:
     capped, uncapped = runner.sections()
 
     runner._enter_section(capped)
-    waits = {steps[i]["name"]: runner._timeout(steps[i], 30.0) for i in (1, 2, 3)}
+    waits = {steps[i]["name"]: runner._timeout(steps[i]) for i in (1, 2, 3)}
     print(f"Section cap     : {waits}")
     if waits != {"thirty": 3.0, "forever": 3.0, "quick": 2.0}:
         problems.append(f"the 3s cap produced {waits}")
@@ -305,14 +413,14 @@ def _check_section_limits() -> list[str]:
         problems.append("a section's own pause did not override the default")
 
     runner._enter_section(uncapped)
-    if runner._timeout(steps[5], 30.0) != 30.0:
+    if runner._timeout(steps[5]) != 30.0:
         problems.append("the cap leaked into the next section")
     if runner._section_pause(uncapped) != 5.0:
         problems.append("a section without its own pause ignored the default")
 
     # A step that waits forever must still be able to wait forever when
     # nothing caps it.
-    if runner._timeout({"type": "wait_for_image", "timeout": 0.0}, 30.0) != 0.0:
+    if runner._timeout({"type": "wait_for_image", "timeout": 0.0}) != 0.0:
         problems.append("'wait forever' stopped meaning forever")
     return problems
 

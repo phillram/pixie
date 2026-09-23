@@ -270,6 +270,17 @@ _VK_CODES = {
 }
 
 
+def hotkey_names() -> tuple[str, ...]:
+    """Every key we can watch for globally, in the order to offer them.
+
+    The GUI builds its Stop key and Start/stop key menus from this, so it can
+    never offer a key that `key_pressed` would then refuse.
+    """
+    function_keys = [f"F{n}" for n in range(1, 13) if f"F{n}" in _VK_CODES]
+    rest = sorted(name for name in _VK_CODES if name not in function_keys)
+    return tuple(function_keys + rest)
+
+
 def key_pressed(name: str) -> bool:
     """Is the named key down right now, even if we don't have focus?"""
     try:
@@ -277,6 +288,6 @@ def key_pressed(name: str) -> bool:
     except KeyError:
         raise ValueError(
             f"Unsupported abort key {name!r}. Choose one of: "
-            + ", ".join(sorted(_VK_CODES))
+            + ", ".join(hotkey_names())
         ) from None
     return bool(ctypes.windll.user32.GetAsyncKeyState(vk) & 0x8000)

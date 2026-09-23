@@ -13,24 +13,58 @@ from pathlib import Path
 from typing import Any, Callable
 
 # What to do when a step's timeout expires without the thing appearing.
-ON_TIMEOUT = ("restart", "continue", "next_section", "stop")
-ON_TIMEOUT_LABELS = {
-    "restart": "Start the whole sequence again",
-    "continue": "Carry on to the next step anyway",
-    "next_section": "Move on to the next section",
-    "stop": "Stop the run",
+#
+# One table, three views. The key is what the file stores and the engine
+# compares against; the label is what the dropdown shows; the note is the
+# sentence underneath it. Adding an option here means adding it in one place,
+# and tools/check_wiring.py fails if the engine cannot carry it out.
+#
+# The notes take {section} and {first} -- filled in with the real section
+# names, because "the whole sequence" and "this section" are the exact pair
+# people mix up.
+ON_TIMEOUT_CHOICES: tuple[tuple[str, str, str], ...] = (
+    ("restart",
+     "Go back to the very first step of the sequence",
+     "Abandons {section} and starts the whole script again from {first}. "
+     "Everything before this step runs a second time."),
+    ("restart_section",
+     "Go back to the first step of this section",
+     "Starts {section} again from its own step 1, and does not touch any "
+     "other section. If this step is that first step, it simply tries again."),
+    ("continue",
+     "Skip it and run the next step anyway",
+     "Carries on down {section} as though this step had worked. Only safe "
+     "when the next step does not depend on this one."),
+    ("next_section",
+     "Leave this section and start the next one",
+     "Stops running {section} and moves on. This is how a section ends: it "
+     "repeats until its first step stops finding what it looks for."),
+    ("stop",
+     "Stop the run completely",
+     "Stops everything, as though you had pressed Stop."),
+)
+ON_TIMEOUT = tuple(key for key, _, _ in ON_TIMEOUT_CHOICES)
+ON_TIMEOUT_LABELS = {key: label for key, label, _ in ON_TIMEOUT_CHOICES}
+ON_TIMEOUT_NOTES = {key: note for key, _, note in ON_TIMEOUT_CHOICES}
+
+# Two situations where the general wording above would mislead, so they get
+# their own. Without these, a step in the first section is told that it
+# "abandons 'Before Game' and starts again from 'Before Game'".
+ON_TIMEOUT_NOTES_FIRST_SECTION = {
+    "restart": "Starts the whole script again from the top. This step is "
+               "already in the first section, {section}, so in practice that "
+               "is the same as starting this section over.",
 }
-# The longer version, shown beside the dropdown, because "start over" reads
-# like "start this section over" and it does not.
-ON_TIMEOUT_NOTES = {
-    "restart": "Back to the very first step of the sequence, not the top of "
-               "this section.",
-    "continue": "Pretend it was found and run the next step regardless. Only "
-                "safe when the next step does not depend on this one.",
-    "next_section": "Leave this section and start the next one. This is how a "
-                    "section ends: it repeats until its first step stops "
-                    "finding what it looks for.",
-    "stop": "Stop everything, as though you had pressed Stop.",
+ON_TIMEOUT_NOTES_NO_SECTIONS = {
+    "restart": "Back to step 1. This sequence has no sections, so the whole "
+               "of it starts again.",
+    "restart_section": "Back to step 1. This sequence has no sections, so "
+                       "there is only one and this does the same as starting "
+                       "the whole sequence again.",
+    "continue": "Runs the next step as though this one had worked. Only safe "
+                "when the next step does not depend on this one.",
+    "next_section": "There is no next section, so this finishes the cycle and "
+                    "starts again from step 1.",
 }
 
 BUTTONS = ("left", "right", "middle")
@@ -87,8 +121,9 @@ _TIMEOUT_HINT = (
 )
 _SECTION_PAUSE_HINT = (
     "Replaces the sequence-wide pause between sections, for this section "
-    "only. Waited when this section starts again, and when it hands over to "
-    "the next one. Set both boxes to 0 for no wait at all."
+    "only. A section ends in one of two ways and this is waited for both: "
+    "when it starts itself again, and when it hands over to the next "
+    "section. Set both boxes to 0 for no wait at all."
 )
 _SECTION_LIMIT_HINT = (
     "A ceiling on every wait inside this section. A step that would wait 30s, "
@@ -181,12 +216,16 @@ _OFFSET_HINT = (
     "Y to roughly half the height of the thing plus a bit — try 40 and adjust."
 )
 
-_CLICK_FIELDS: tuple[Field, ...] = (
+# How to click. Steps that click a fixed spot or a box take only these.
+_BUTTON_FIELDS: tuple[Field, ...] = (
     Field("clicks", "integer", "How many clicks", 1,
           hint="2 for a double-click: two clicks 60ms apart, which is well "
                "inside Windows' double-click time, so the application reads "
                "them as one double-click."),
     Field("button", "choice", "Which mouse button", "left", choices=BUTTONS),
+)
+# ...plus where to click, for the steps that click whatever they just found.
+_CLICK_FIELDS: tuple[Field, ...] = _BUTTON_FIELDS + (
     Field("offset", "offset", "Click offset", [0, 0], hint=_OFFSET_HINT),
 )
 
@@ -206,7 +245,7 @@ STEP_TYPES: dict[str, StepType] = {
               "Use the Name box above as the section's title. The two settings "
               "below apply to every step in this section.",
         fields=(
-            Field("pause", "pause", "Pause around this section", None,
+            Field("pause", "pause", "Pause when this section ends", None,
                   hint=_SECTION_PAUSE_HINT),
             Field("wait_limit", "limit", "Cap every wait in here at (s)", None,
                   hint=_SECTION_LIMIT_HINT),
@@ -329,7 +368,7 @@ STEP_TYPES: dict[str, StepType] = {
         key="click_point",
         label="Click a fixed spot",
         blurb="Click the same screen position every time.",
-        fields=(Field("pos", "point", "Where", None, required=True),) + _CLICK_FIELDS[:2],
+        fields=(Field("pos", "point", "Where", None, required=True),) + _BUTTON_FIELDS,
         describe=lambda s: f"{_clicks_word(s)} at {_point(s)}",
     ),
     "click_box": StepType(
@@ -342,7 +381,7 @@ STEP_TYPES: dict[str, StepType] = {
               "ground that is safe to click.",
         fields=(Field("box", "box", "Box to click in", None, required=True,
                       hint="Drag over the area. Every click lands somewhere "
-                           "inside it, chosen fresh each time."),) + _CLICK_FIELDS[:2],
+                           "inside it, chosen fresh each time."),) + _BUTTON_FIELDS,
         describe=lambda s: (f"{_clicks_word(s)} somewhere in "
                             + (f"a {s['box'][2]}x{s['box'][3]} box"
                                if s.get("box") else "(no box yet)")),
@@ -453,6 +492,50 @@ def section_name(steps: list[dict[str, Any]], index: int) -> str:
         if steps[earlier].get("type") == "section":
             return str(steps[earlier].get("name") or "Untitled section")
     return ""
+
+
+def section_starts(steps: list[dict[str, Any]]) -> list[int]:
+    """Where each section begins. The one source for how a list is divided."""
+    starts = [i for i, step in enumerate(steps) if step.get("type") == "section"]
+    if not starts or starts[0] != 0:
+        starts.insert(0, 0)  # whatever comes before the first divider
+    return starts
+
+
+def _quoted_section(steps: list[dict[str, Any]], index: int) -> str:
+    name = section_name(steps, index)
+    return f"'{name}'" if name else "this sequence"
+
+
+def outcome_note(key: str, steps: list[dict[str, Any]], index: int) -> str:
+    """What one 'if it is not found' choice means for this particular step.
+
+    Filled in with the real section names. "Start the whole sequence again"
+    reads as ambiguous however it is worded; "Abandons 'In Game' and starts
+    the whole script again from 'Before Game'" does not.
+    """
+    note = ON_TIMEOUT_NOTES.get(key, "")
+    if not note or not steps or not (0 <= index < len(steps)):
+        return note
+
+    divided = any(step.get("type") == "section" for step in steps)
+    if not divided:
+        return ON_TIMEOUT_NOTES_NO_SECTIONS.get(key, note).format(
+            section="this sequence", first="the top")
+
+    starts = section_starts(steps)
+    first_start = starts[0]
+    first = (f"'{steps[first_start].get('name') or 'Untitled section'}'"
+             if steps[first_start].get("type") == "section" else "the top")
+
+    # Is this step in the first section? Then "the whole sequence" and "this
+    # section" land in nearly the same place, and saying so is clearer than
+    # pretending they are different.
+    mine = max((start for start in starts if start <= index), default=0)
+    if mine == first_start:
+        note = ON_TIMEOUT_NOTES_FIRST_SECTION.get(key, note)
+
+    return note.format(section=_quoted_section(steps, index), first=first)
 
 
 def location(steps: list[dict[str, Any]], index: int) -> str:

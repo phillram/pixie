@@ -36,15 +36,13 @@ LOG_COLORS = {"info": theme.FG, "warn": theme.WARN, "error": theme.ERROR,
 
 
 OFF = "Off"  # what the start/stop key is set to when you don't want one
-HOTKEYS = ["F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F11",
-           "F12", "ESC", "PAUSE", "SCROLLLOCK"]
+# The keys we can offer come from the ones screen.key_pressed can read, so the
+# menu cannot drift into offering a key that would then fail.
+HOTKEYS = list(screen.hotkey_names())
 HOTKEY_POLL_MS = 90  # how often to ask Windows whether the start key is down
 
-PARK_LABELS = {
-    "off": "leave the cursor alone",
-    "center": "move it to the middle of the screen",
-    "custom": "move it to a spot I pick",
-}
+# Both from the engine, which owns what these settings mean.
+PARK_LABELS = engine_mod.PARK_LABELS
 PARK_MODES = {label: mode for mode, label in PARK_LABELS.items()}
 
 
@@ -142,7 +140,9 @@ class SettingsDialog:
          "one without the other - set both to 0 to move between screens with "
          "no delay at all."),
         ("cycle_pause", "Pause between cycles",
-         "Extra wait after the last step, before starting the list again."),
+         "One cycle is one trip through every section. This is waited at the "
+         "end of that trip, before the sequence starts again from its very "
+         "first step."),
     )
 
     def __init__(self, parent: tk.Misc, settings: engine_mod.Settings,
@@ -1226,18 +1226,21 @@ class App:
                                                  stored.get(var.get(), var.get())))
         self.field_vars[spec.key] = var
 
-        notes = step_defs.CHOICE_NOTES.get(spec.key)
-        if not notes:
+        if spec.key not in step_defs.CHOICE_NOTES:
             return 0
 
-        # The one-line consequence of the choice, under the box, because "If
-        # not found: start the whole sequence again" is worth spelling out.
+        # The consequence of the choice, spelled out under the box with this
+        # sequence's real section names in it. "Start the whole sequence
+        # again" is ambiguous however it is phrased; "Abandons 'In Game' and
+        # starts the whole script again from 'Before Game'" is not.
+        def explain(value: str) -> str:
+            return step_defs.outcome_note(value, self.sequence.steps, self.selected)
+
         note = ttk.Label(self.editor, style="Blurb.TLabel", justify="left",
-                         wraplength=int(520 * self.scale),
-                         text=notes.get(current, ""))
+                         wraplength=int(520 * self.scale), text=explain(current))
         note.grid(row=row + 1, column=1, columnspan=2, sticky="w", pady=(0, 6))
         var.trace_add("write", lambda *_: note.configure(
-            text=notes.get(stored.get(var.get(), var.get()), "")))
+            text=explain(stored.get(var.get(), var.get()))))
         return 1
 
     def _field_integer(self, step: dict[str, Any], spec: step_defs.Field, row: int) -> None:

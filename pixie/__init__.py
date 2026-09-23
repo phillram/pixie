@@ -9,4 +9,4 @@ The package is split three ways:
 Nothing in core or system imports from ui, so the engine can run headless.
 """
 
-__version__ = "1.0.6"
+__version__ = "1.0.7"

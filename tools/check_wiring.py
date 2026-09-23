@@ -78,6 +78,37 @@ def main() -> int:
 
     print(f"  {len(kinds)} field kinds, all with an editor")
 
+    # Every value a dropdown can hold needs plain English to show for it, and
+    # the engine has to know what to do with every 'if not found' option.
+    for step_type in steps.STEP_TYPES.values():
+        for spec in step_type.fields:
+            if spec.kind != "choice":
+                continue
+            labels = steps.CHOICE_LABELS.get(spec.key, {})
+            for value in spec.choices:
+                if value not in labels:
+                    problems.append(f"choice {value!r} on {spec.key!r} has no "
+                                    "label in CHOICE_LABELS")
+            if spec.default not in spec.choices:
+                problems.append(f"{step_type.key}.{spec.key} defaults to "
+                                f"{spec.default!r}, which is not one of its choices")
+
+    carried_out = _outcomes_the_engine_handles()
+    for value in steps.ON_TIMEOUT:
+        if value not in carried_out:
+            problems.append(f"'if not found' option {value!r} is offered but "
+                            "run_cycle never acts on it")
+        if value not in steps.ON_TIMEOUT_NOTES:
+            problems.append(f"'if not found' option {value!r} has no note")
+    print(f"  {len(steps.ON_TIMEOUT)} 'if not found' options, all acted on")
+
+    # Every level the engine logs at needs a color in the GUI.
+    from pixie.ui.app import LOG_COLORS
+
+    for level in engine.LOG_LEVELS:
+        if level not in LOG_COLORS:
+            problems.append(f"log level {level!r} has no color in the GUI")
+
     for name in ("hue", "rgb"):
         if name not in steps.COLOR_MATCH:
             problems.append(f"color match mode {name!r} has gone missing")
@@ -88,6 +119,22 @@ def main() -> int:
 
     print("\nWIRING OK")
     return 0
+
+
+def _outcomes_the_engine_handles() -> set[str]:
+    """Which 'if not found' values run_cycle actually has a branch for.
+
+    Read back out of the source, so offering a new option in steps.py without
+    teaching the engine to carry it out is caught here rather than by a
+    sequence quietly doing the wrong thing at three in the morning.
+    """
+    import inspect
+    import re
+
+    from pixie.core.engine import Engine
+
+    source = inspect.getsource(Engine.run_cycle)
+    return set(re.findall(r'on_timeout == "([a-z_]+)"', source))
 
 
 def _report(problems: list[str]) -> None:

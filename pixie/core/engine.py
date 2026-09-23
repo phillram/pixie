@@ -26,6 +26,20 @@ FAILSAFE_CORNER = 5  # mouse within this many pixels of the top-left aborts
 GUARD_INTERVAL = 0.05
 IDLE_NOTICE_SECONDS = 15.0  # how often to say 'still waiting' while idling
 
+# Every level `log` may be called with. The GUI colors them, and
+# tools/check_wiring.py fails if it has no color for one of these.
+LOG_LEVELS = ("info", "good", "warn", "error", "muted")
+
+# Where the cursor goes after each step. The keys are what a sequence file
+# stores; the labels are what Settings shows. One table, so the two cannot
+# disagree about what "center" means.
+PARK_LABELS = {
+    "off": "leave the cursor alone",
+    "center": "move it to the middle of the screen",
+    "custom": "move it to a spot I pick",
+}
+PARK_MODES = tuple(PARK_LABELS)
+
 
 class Aborted(Exception):
     """The user asked us to stop."""
@@ -151,9 +165,10 @@ class Sequence:
         if not any(s.get("type") == "section" for s in active):
             return []
         if not any(s.get("on_timeout") == "next_section" for s in active):
-            return ["This sequence has sections, but no step is set to 'Move on "
-                    "to the next section' - so the first section will repeat "
-                    "forever and the others will never run."]
+            return ["This sequence has sections, but no step is set to "
+                    f"'{step_defs.ON_TIMEOUT_LABELS['next_section']}' - so the "
+                    "first section will repeat forever and the others will "
+                    "never run."]
         return []
 
     def problems(self) -> list[str]:
@@ -260,14 +275,18 @@ class Engine:
             return spec.default
         return fallback
 
-    def _timeout(self, step: dict[str, Any], fallback: float) -> float:
+    def _timeout(self, step: dict[str, Any]) -> float:
         """How long this step may wait, honoring its section's ceiling.
+
+        The number itself comes from the step, or failing that from the
+        default its type declares -- never from a second copy kept here,
+        which is how two sources drift apart.
 
         The section limit is a cap rather than a replacement: a step that
         already gives up sooner keeps its own time. A step set to wait forever
         (0) is the one this exists for, so the cap wins there outright.
         """
-        own = float(self._value(step, "timeout", fallback))
+        own = float(self._value(step, "timeout", 30.0))
         if self.wait_limit is None:
             return own
         return self.wait_limit if own <= 0 else min(own, self.wait_limit)
@@ -331,13 +350,13 @@ class Engine:
                 int(self._value(step, "radius", 3)),
                 self._value(step, "mode", "any"),
             ) or None,
-            self._timeout(step, 30.0),
+            self._timeout(step),
             f"RGB{target} at {x}, {y}",
         )
         if found is None:
             self.log(f"    color RGB{target} not seen at {x}, {y} "
                      f"(saw RGB{screen.pixel_color(x, y)}) "
-                     f"{self._gave_up(self._timeout(step, 30.0))}", "warn")
+                     f"{self._gave_up(self._timeout(step))}", "warn")
             return "timeout"
         self.last_match = (x, y)
         self.log(f"    color RGB{target} present at {x}, {y}")
@@ -370,7 +389,7 @@ class Engine:
 
         hit = self._poll_until(
             lambda: self._look_for_color(step, region),
-            self._timeout(step, 2.0),
+            self._timeout(step),
             self._color_description(step),
         )
         if hit is None:
@@ -392,7 +411,7 @@ class Engine:
             return "timeout"
         hit = self._poll_until(
             lambda: self._look_for_color(step, region),
-            self._timeout(step, 30.0),
+            self._timeout(step),
             self._color_description(step),
         )
         target = tuple(step["color"])
@@ -402,7 +421,7 @@ class Engine:
             # thing found" to pick up and click somewhere wrong.
             self.last_match = None
             self.log(f"    no patch of RGB{target} at least {min_pixels}px "
-                     f"in that area {self._gave_up(self._timeout(step, 30.0))}",
+                     f"in that area {self._gave_up(self._timeout(step))}",
                      "warn")
             return "timeout"
         self.last_match = hit.center
@@ -411,7 +430,7 @@ class Engine:
         return "ok"
 
     def _do_wait_for_image(self, step: dict[str, Any]) -> str:
-        waited = self._timeout(step, 30.0)
+        waited = self._timeout(step)
         match = self._find(step, waited)
         if match is None:
             self.last_match = None
@@ -424,7 +443,7 @@ class Engine:
         return "ok"
 
     def _do_click_image(self, step: dict[str, Any]) -> str:
-        waited = self._timeout(step, 10.0)
+        waited = self._timeout(step)
         match = self._find(step, waited)
         if match is None:
             self.last_match = None
@@ -440,7 +459,7 @@ class Engine:
         return "ok"
 
     def _do_click_image_if_present(self, step: dict[str, Any]) -> str:
-        match = self._find(step, self._timeout(step, 3.0))
+        match = self._find(step, self._timeout(step))
         if match is None:
             self.last_match = None
             self.log(f"    {Path(step['image']).name} not there, skipping")
@@ -640,28 +659,47 @@ class Engine:
                 index += 1
                 continue
 
-            on_timeout = step.get("on_timeout", "restart")
+            on_timeout = self._value(step, "on_timeout", "restart")
+            if on_timeout not in step_defs.ON_TIMEOUT:
+                # Never from the GUI, but a hand-edited file can say anything,
+                # and silently picking a branch would be worse than saying so.
+                self.log(f"    '{on_timeout}' is not something I know how to do "
+                         "when a step fails - starting the sequence over "
+                         "instead", "error")
+                on_timeout = "restart"
+
             if on_timeout == "stop":
                 self.log("    giving up: this step is set to stop the run", "error")
                 return "stop"
             if on_timeout == "continue":
-                self.log("    carrying on anyway", "warn")
+                self.log("    skipping it, carrying on down this section", "warn")
                 index += 1
                 continue
             if on_timeout == "restart":
-                self.log("    starting the sequence over", "warn")
+                self.log("    back to the very first step of the sequence", "warn")
                 return "restart"
+            if on_timeout == "restart_section":
+                self.log(f"    back to the first step of '{name}'", "warn")
+                index = start
+                self._sleep(self._section_pause(sections[current]))
+                continue
+            if on_timeout == "next_section":
+                current += 1
+                if current >= len(sections):
+                    self.log("    that was the last section - back to the top",
+                             "warn")
+                    return "ok"
+                self.log(f"    moving on from '{name}'", "warn")
+                self._sleep(self._section_pause(sections[current - 1]))
+                index = sections[current][0]
+                self._enter_section(sections[current])
+                self._announce_section(sections[current])
+                continue
 
-            # next_section
-            current += 1
-            if current >= len(sections):
-                self.log("    that was the last section - back to the top", "warn")
-                return "ok"
-            self.log(f"    moving on from '{name}'", "warn")
-            self._sleep(self._section_pause(sections[current - 1]))
-            index = sections[current][0]
-            self._enter_section(sections[current])
-            self._announce_section(sections[current])
+            # Unreachable: the branches above cover every value in
+            # step_defs.ON_TIMEOUT, and check_wiring.py proves it by reading
+            # them back out of this method.
+            raise AssertionError(f"no branch for on_timeout {on_timeout!r}")
 
     def _announce_section(self, section: tuple[int, int, str]) -> None:
         if len(self.sections()) <= 1:
@@ -700,9 +738,15 @@ class Engine:
 
         reason = "stopped"
         try:
-            while max_cycles is None or self.cycles_completed < max_cycles:
+            # Count attempts, not completed cycles. A sequence whose first
+            # step keeps failing with "start over" completes nothing, and
+            # counting only completions meant --max-cycles never arrived and
+            # an unattended run went round forever.
+            attempts = 0
+            while max_cycles is None or attempts < max_cycles:
+                attempts += 1
                 self._guard()
-                self.log(f"Cycle {self.cycles_completed + 1}")
+                self.log(f"Cycle {attempts}")
                 outcome = self.run_cycle()
                 if outcome == "stop":
                     reason = "a step asked to stop"
@@ -714,6 +758,9 @@ class Engine:
                 self._sleep(self.sequence.settings.cycle_pause())
             else:
                 reason = f"finished {max_cycles} cycle(s)"
+                if self.cycles_completed < max_cycles:
+                    reason += (f", {self.cycles_completed} of which got all the "
+                               "way through")
         except Aborted as stop:
             reason = str(stop)
         except FileNotFoundError as missing:
