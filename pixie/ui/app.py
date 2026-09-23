@@ -437,7 +437,9 @@ def show_matches(parent: tk.Misc, picture, kept, dropped,
     name = step.get("name") or step.get("type")
     return PictureWindow(
         parent, f"What matches - {name}", picture, lines,
-        caption="magenta = matched the color     green = would be used",
+        caption=("magenta = matched the color     green box = would be used"
+                 "     dot = the middle of the box, which is not where it "
+                 "clicks unless the step aims there"),
         scale=scale, save_as=f"what-matched-{_slug(name)}")
 
 
