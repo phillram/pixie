@@ -328,13 +328,20 @@ class SettingsDialog:
         return self.saved
 
 
-class MatchViewer:
-    """Shows the search area with everything the color search found marked up."""
+class PictureWindow:
+    """A screenshot with notes under it. Used by every 'show me' answer.
 
-    def __init__(self, parent: tk.Misc, picture, kept, dropped,
-                 step: dict[str, Any], scale: float = 1.0) -> None:
+    Reading numbers out of a log and picturing where they are on screen is
+    the part people get wrong, so anything Pixie can show instead of
+    describing, she shows.
+    """
+
+    def __init__(self, parent: tk.Misc, title: str, picture,
+                 lines: list[tuple[str, str]], caption: str = "",
+                 scale: float = 1.0, save_as: str = "picture") -> None:
+        self.save_as = save_as
         self.window = tk.Toplevel(parent)
-        self.window.title(f"What matches - {step.get('name') or step.get('type')}")
+        self.window.title(title)
         theme.dark_titlebar(self.window)
         self.window.configure(bg=theme.BG)
         self.window.transient(parent)  # type: ignore[arg-type]
@@ -359,39 +366,19 @@ class MatchViewer:
         label.image = photo   # Tk drops the image without a reference
         label.pack(padx=1, pady=1)
 
-        caption = f"{full[0]} x {full[1]} search area"
+        note = f"{full[0]} x {full[1]}"
         if shown.size != full:
-            caption += f", shown at {shown.size[0]} x {shown.size[1]}"
-        caption += "     magenta = matched the color     green = would be used"
-        ttk.Label(frame, text=caption, style="Muted.TLabel").pack(anchor="w",
-                                                                  pady=(6, 10))
+            note += f", shown at {shown.size[0]} x {shown.size[1]}"
+        ttk.Label(frame, text=f"{note}     {caption}", style="Muted.TLabel").pack(
+            anchor="w", pady=(6, 10))
 
-        report = theme.text(frame, height=min(12, 3 + len(kept) + len(dropped)),
+        report = theme.text(frame, height=min(14, max(3, len(lines) + 1)),
                             width=92, state="normal")
         report.pack(fill="both", expand=True)
         for level, color in LOG_COLORS.items():
             report.tag_configure(level, foreground=color)
-
-        if kept:
-            report.insert("end", f"Would be used, in order ({step.get('pick')}):\n",
-                          "good")
-            for number, (hit, note) in enumerate(kept, start=1):
-                report.insert("end", f"  {number}. {hit.width}x{hit.height} at "
-                                     f"{hit.left}, {hit.top}   {hit.pixels} pixels"
-                                     f"   middle {hit.x}, {hit.y}   {note}\n")
-                if hit.clipped:
-                    report.insert(
-                        "end", f"      runs off the {hit.clipped} of the search "
-                               "area, so it is cut off - widen the area\n", "warn")
-        else:
-            report.insert("end", "Nothing would be used.\n", "warn")
-        if dropped:
-            report.insert("end", f"\nIgnored ({len(dropped)}):\n", "muted")
-            for hit, why in dropped[:40]:
-                report.insert("end", f"  {hit.width}x{hit.height} at {hit.left}, "
-                                     f"{hit.top}   {why}\n", "muted")
-            if len(dropped) > 40:
-                report.insert("end", f"  ...and {len(dropped) - 40} more\n", "muted")
+        for text, tag in lines:
+            report.insert("end", text + "\n", tag)
         report.configure(state="disabled")
 
         buttons = ttk.Frame(frame)
@@ -399,7 +386,7 @@ class MatchViewer:
         # Nothing is written to disk unless you ask: these are worth keeping
         # only when you want to compare two attempts or show someone.
         save = ttk.Button(buttons, text="Save picture...", style="Tool.TButton",
-                          command=lambda: self._save(picture, step))
+                          command=lambda: self._save(picture))
         save.pack(side="left", padx=(0, 6))
         theme.tip(save, "Write this picture to a file. Nothing is saved "
                         "automatically - it only exists in this window.")
@@ -412,19 +399,63 @@ class MatchViewer:
         y = parent.winfo_rooty() + 40
         self.window.geometry(f"+{x}+{y}")
 
-    def _save(self, picture, step: dict[str, Any]) -> None:
-        import re
-
+    def _save(self, picture) -> None:
         import cv2
 
-        slug = re.sub(r"[^a-z0-9]+", "_",
-                      str(step.get("name") or "match").lower()).strip("_")
         target = filedialog.asksaveasfilename(
             parent=self.window, title="Save this picture",
-            initialdir=str(PROJECT_DIR), initialfile=f"what-matched-{slug}.png",
+            initialdir=str(PROJECT_DIR), initialfile=f"{self.save_as}.png",
             defaultextension=".png", filetypes=[("PNG image", "*.png")])
         if target:
             cv2.imwrite(target, picture)
+
+
+def show_matches(parent: tk.Misc, picture, kept, dropped,
+                 step: dict[str, Any], scale: float = 1.0) -> PictureWindow:
+    """The 'what is this color step matching' window."""
+    lines: list[tuple[str, str]] = []
+    if kept:
+        lines.append((f"Would be used, in order ({step.get('pick')}):", "good"))
+        for number, (hit, note) in enumerate(kept, start=1):
+            lines.append((f"  {number}. {hit.width}x{hit.height} at {hit.left}, "
+                          f"{hit.top}   {hit.pixels} pixels   middle {hit.x}, "
+                          f"{hit.y}   {note}", "info"))
+            if hit.clipped:
+                lines.append((f"      runs off the {hit.clipped} of the search "
+                              "area, so it is cut off - widen the area", "warn"))
+    else:
+        lines.append(("Nothing would be used.", "warn"))
+    if dropped:
+        lines.append(("", "muted"))
+        lines.append((f"Ignored ({len(dropped)}):", "muted"))
+        for hit, why in dropped[:40]:
+            lines.append((f"  {hit.width}x{hit.height} at {hit.left}, {hit.top}"
+                          f"   {why}", "muted"))
+        if len(dropped) > 40:
+            lines.append((f"  ...and {len(dropped) - 40} more", "muted"))
+
+    name = step.get("name") or step.get("type")
+    return PictureWindow(
+        parent, f"What matches - {name}", picture, lines,
+        caption="magenta = matched the color     green = would be used",
+        scale=scale, save_as=f"what-matched-{_slug(name)}")
+
+
+def show_click(parent: tk.Misc, picture, region, points, boxes,
+               lines: list[tuple[str, str]], step: dict[str, Any],
+               scale: float = 1.0) -> PictureWindow:
+    """The 'where would this step click' window."""
+    name = step.get("name") or step.get("type")
+    marked = screen.mark_up(picture, region, points=points[:1], boxes=boxes,
+                            faint=points[1:])
+    return PictureWindow(
+        parent, f"Where this would click - {name}", marked, lines,
+        caption="yellow crosshair = the click     green = what it found",
+        scale=scale, save_as=f"where-it-clicks-{_slug(name)}")
+
+
+def _slug(text: Any) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", str(text or "step").lower()).strip("_")
 
 
 class App:
@@ -674,9 +705,18 @@ class App:
                   "reject greyed out.\n\nUse it when something is matching that "
                   "should not be - a background that happens to share the "
                   "color is impossible to diagnose any other way.")
+        self.click_button = ttk.Button(header, text="Show the click",
+                                       style="Tool.TButton",
+                                       command=self.preview_click, state="disabled")
+        self.click_button.grid(row=0, column=2, sticky="e", padx=(0, 6))
+        theme.tip(self.click_button,
+                  "Works out where this step would click, right now, and shows "
+                  "you the spot on a picture of the screen.\n\nIt runs the step "
+                  "for real except for the click itself, so the crosshair is "
+                  "where the click would actually go - not a second guess at it.")
         self.test_button = ttk.Button(header, text="Test this step", style="Tool.TButton",
                                       command=self.test_step, state="disabled")
-        self.test_button.grid(row=0, column=2, sticky="e")
+        self.test_button.grid(row=0, column=3, sticky="e")
         theme.tip(self.test_button,
                   "Run only the selected step, once, and report what it found in "
                   "the log. The quickest way to tune an image or a color without "
@@ -1001,6 +1041,7 @@ class App:
             self.editor_title.configure(text="Step settings")
             self.test_button.configure(state="disabled")
             self.explain_button.configure(state="disabled")
+            self.click_button.configure(state="disabled")
             ttk.Label(self.editor, style="Panel.TLabel", justify="left",
                       text="No step selected.\n\nPress “Add step” to start "
                            "building your sequence.").grid(row=0, column=0, sticky="w")
@@ -1017,9 +1058,13 @@ class App:
             text=step_type.label if number is None
             else f"Step {number}: {step_type.label}")
         self.test_button.configure(state="normal")
-        searches_an_area = "region" in step_type.field_map() and "color" in step
+        fields = step_type.field_map()
+        searches_an_area = "region" in fields and "color" in step
         self.explain_button.configure(
             state="normal" if searches_an_area else "disabled")
+        # Anything with a click count is a step that clicks something.
+        self.click_button.configure(
+            state="normal" if "clicks" in fields else "disabled")
         self.editor.columnconfigure(1, weight=1)
 
         ttk.Label(self.editor, text=step_type.blurb, style="Blurb.TLabel",
@@ -1918,6 +1963,7 @@ class App:
         self.root.title(f"{APP_NAME} - running")
         self.test_button.configure(state="disabled")
         self.explain_button.configure(state="disabled")
+        self.click_button.configure(state="disabled")
 
         self.worker = threading.Thread(target=self.engine.run, daemon=True)
         self.worker.start()
@@ -1975,13 +2021,102 @@ class App:
             self.root.deiconify()
             self.root.lift()
 
-        MatchViewer(self.root, picture, kept, dropped, step, self.scale)
+        show_matches(self.root, picture, kept, dropped, step, self.scale)
         self.log(f"{len(kept)} patch(es) would be used, {len(dropped)} ignored.",
                  "good" if kept else "warn")
 
     def _setting(self, step: dict[str, Any], key: str) -> Any:
         """A step's value for a field, or the default its type declares."""
         return engine_mod.Engine._value(step, key, None)
+
+    def preview_click(self) -> None:
+        """Show exactly where the selected step would click, on the real screen.
+
+        Runs the step for real except for the click itself, so the point comes
+        from the same code the run would use, not from a second guess at it.
+        A step that clicks whatever was found last needs the step before it to
+        have found something, so that one is run too.
+        """
+        step = self.current_step()
+        if step is None or self.running:
+            return
+
+        needed = self._steps_for_preview(step)
+        self.root.withdraw()
+        self.root.update()
+        time.sleep(0.35)
+        try:
+            points, boxes, lines = self._rehearse(needed, step)
+        except Exception as error:  # noqa: BLE001 - report, don't disappear
+            self.log(f"Could not work out the click: {error!r}", "error")
+            return
+        finally:
+            self.root.deiconify()
+            self.root.lift()
+
+        if not points:
+            self.log("That step would not click anything right now - see the "
+                     "log above for what it was looking for.", "warn")
+            return
+        picture, region = screen.picture_around(*points[0])
+        show_click(self.root, picture, region, points, boxes, lines, step,
+                   self.scale)
+        self.log(f"It would click {points[0][0]}, {points[0][1]}.", "good")
+
+    def _steps_for_preview(self, step: dict[str, Any]) -> list[dict[str, Any]]:
+        """The step, plus whatever has to run first for it to make sense."""
+        if step.get("type") != "click_last_match":
+            return [step]
+        # Walk back to the nearest step that would leave something to click.
+        for index in range(self.selected - 1, -1, -1):
+            earlier = self.sequence.steps[index]
+            if (earlier.get("enabled", True)
+                    and earlier.get("type") not in step_defs.MARKERS):
+                return [earlier, step]
+        return [step]
+
+    def _rehearse(self, steps: list[dict[str, Any]], step: dict[str, Any]):
+        """Run the steps with the clicks recorded instead of sent."""
+        recorded: list[tuple[int, int, str]] = []
+
+        class Rehearsal(engine_mod.Engine):
+            def _click(self, x, y, one, what):  # noqa: ANN001 - matches the base
+                recorded.append((x, y, what))
+                super()._click(x, y, one, what)
+
+        # No pauses and no parking: this is a rehearsal, not a run.
+        settings = engine_mod.Settings.from_dict(vars(self.sequence.settings))
+        settings.step_pause_min = settings.step_pause_max = 0.0
+        settings.park_mouse = "off"
+        runner = Rehearsal(
+            engine_mod.Sequence(name="preview", steps=steps, settings=settings),
+            emit=self.events.put, dry_run=True, base_dir=PROJECT_DIR)
+        for one in steps:
+            runner.run_step(one)
+
+        boxes = [runner.last_box] if runner.last_box else []
+        lines: list[tuple[str, str]] = []
+        for x, y, what in recorded:
+            lines.append((f"Would click {x}, {y}  -  {what}", "good"))
+        if len(steps) > 1:
+            lines.append((f"After running '{steps[0].get('name')}' first, which "
+                          "is what it clicks the result of.", "muted"))
+        if runner.last_box:
+            left, top, width, height = runner.last_box
+            lines.append((f"What it found: {width}x{height} at {left}, {top}",
+                          "info"))
+        # points[0] is the click. Anything after it is somewhere else the same
+        # step could equally have landed, drawn faintly.
+        points = [point[:2] for point in recorded[:1]]
+        if step.get("type") == "click_box" and step.get("box"):
+            lines.append(("This step picks a fresh spot inside the box every "
+                          "time - the faint dots are twenty more it could "
+                          "have chosen.", "muted"))
+            for _ in range(20):
+                runner.run_step(step)
+                points.append(recorded[-1][:2])
+            boxes = [tuple(step["box"])]
+        return points, boxes, lines
 
     def test_step(self) -> None:
         step = self.current_step()

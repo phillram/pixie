@@ -73,6 +73,25 @@ pixel to say what you mean.
 `Test this step` runs only the selected step and reports what it found. It is
 the quickest way to tune a match without running everything.
 
+Two buttons beside it answer questions a log cannot, by showing you a picture
+of your own screen instead of describing one:
+
+* **What matches?** on a step that searches an area for a color: every
+  matching pixel tinted, every patch boxed and numbered in the order the step
+  would use them, the rejected ones greyed out with the reason, and the
+  saturation of each so you can tell a highlight from a background
+* **Show the click** on any step that clicks: a crosshair on the exact spot,
+  at life size, with the thing it found boxed around it
+
+Show the click runs the step for real and intercepts only the click itself, so
+the crosshair is where the click would genuinely go rather than a second guess
+at it. A step that clicks whatever was found last has nothing to show on its
+own, so the step before it is run first and the window says so. A step that
+picks a random spot in a box shows twenty more spots it could equally have
+chosen.
+
+Neither writes anything to disk unless you press `Save picture...`.
+
 `Duplicate`, or Ctrl+D, copies the selected step with all its settings and
 drops the copy underneath. It is the fast way to build several steps that
 differ only by their image or their position: duplicate, then recapture. A

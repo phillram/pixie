@@ -842,7 +842,7 @@ def check_what_matches_window():
     root.deiconify()
     root.update()
     try:
-        viewer = gui.MatchViewer(root, picture, kept, dropped, step)
+        viewer = gui.show_matches(root, picture, kept, dropped, step)
         root.update()
         shown = [w for w in _descendants(viewer.window) if isinstance(w, tk.Text)]
         if not shown:
@@ -862,6 +862,96 @@ def check_what_matches_window():
         viewer.window.destroy()
     finally:
         root.withdraw()
+    return problems
+
+
+def check_show_the_click():
+    """'Show the click' must work the point out the way a run would.
+
+    Including the awkward case: a step that clicks whatever was found last
+    has nothing to show on its own, so the step before it has to be run
+    first.
+    """
+    import cv2
+    import numpy as np
+
+    from pixie.system import screen as screen_mod
+
+    problems = []
+
+    def hsv(h, s, v):
+        return tuple(int(c) for c in cv2.cvtColor(
+            np.array([[[h, s, v]]], dtype=np.uint8), cv2.COLOR_HSV2BGR)[0, 0])
+
+    frame = np.zeros((400, 900, 3), dtype=np.uint8)
+    frame[100:340, 200:600] = hsv(90, 250, 250)   # one solid patch to find
+    def fake_grab(region=None):
+        """Pretend the sample frame is sitting at the top left of the desktop."""
+        if region is None:
+            return frame
+        left, top, width, height = region
+        out = np.zeros((height, width, 3), dtype=np.uint8)
+        x0, y0 = max(left, 0), max(top, 0)
+        x1 = min(left + width, frame.shape[1])
+        y1 = min(top + height, frame.shape[0])
+        if x1 > x0 and y1 > y0:
+            out[y0 - top:y1 - top, x0 - left:x1 - left] = frame[y0:y1, x0:x1]
+        return out
+
+    original = screen_mod.grab
+    screen_mod.grab = fake_grab
+
+    finder = dict(step_defs.new_step("wait_for_color_in_area"),
+                  name="find it", region=[0, 0, 900, 400], color=[37, 254, 254],
+                  match="hue", tolerance=14, min_pixels=39, timeout=1.0)
+    clicker = dict(step_defs.new_step("click_last_match"), name="click it",
+                   anchor="left", offset=[50, 0], clicks=2)
+    fixed = dict(step_defs.new_step("click_point"), name="fixed", pos=[640, 480])
+
+    app.sequence = engine_mod.Sequence(name="clicks",
+                                       steps=[finder, clicker, fixed])
+    app.refresh_list(keep=0)
+    try:
+        # 1. the step that clicks the last match: the finder must run first.
+        app.selected = 1
+        needed = app._steps_for_preview(clicker)
+        if [s.get("name") for s in needed] != ["find it", "click it"]:
+            problems.append(f"it would rehearse {[s.get('name') for s in needed]}, "
+                            "not the finder and then the click")
+        points, boxes, lines = app._rehearse(needed, clicker)
+        if not points:
+            problems.append("no click point was worked out")
+            return problems
+        # The patch is 400x240 at 200,100, so its left edge plus the 50 offset
+        # is x=250, and the middle of that edge is row 219 (100..339).
+        if points[0] != (250, 219):
+            problems.append(f"the click point came out as {points[0]}, "
+                            "expected (250, 219)")
+        if not any("Would click" in text for text, _ in lines):
+            problems.append(f"the report does not say where: {lines}")
+        if not boxes:
+            problems.append("what it found was not reported as a box")
+
+        # 2. a fixed spot needs nothing run first.
+        app.selected = 2
+        if [s.get("name") for s in app._steps_for_preview(fixed)] != ["fixed"]:
+            problems.append("a fixed click dragged another step into it")
+        points, _boxes, _lines = app._rehearse([fixed], fixed)
+        if points[0] != (640, 480):
+            problems.append(f"a fixed click previewed as {points[0]}")
+
+        # 3. the picture gets marked where the click goes.
+        picture, region = screen_mod.picture_around(*points[0], 400, 300)
+        marked = screen_mod.mark_up(picture, region, points=points,
+                                    boxes=[(600, 440, 80, 80)])
+        if marked.shape != picture.shape:
+            problems.append("marking up changed the size of the picture")
+        if not (marked != picture).any():
+            problems.append("marking up drew nothing at all")
+        print(f"Show the click ok: {points[0]} marked on a "
+              f"{region[2]}x{region[3]} view")
+    finally:
+        screen_mod.grab = original
     return problems
 
 
@@ -1164,7 +1254,7 @@ except Exception as error:  # noqa: BLE001
     failures.append(f"image cleanup check: {error!r}")
 
 for check in (check_boxes_can_be_typed_into, check_panes_can_be_dragged,
-              check_what_matches_window,
+              check_what_matches_window, check_show_the_click,
               check_window_size_is_remembered,
               check_settings_stick):
     try:

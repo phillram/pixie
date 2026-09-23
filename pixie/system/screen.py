@@ -415,6 +415,48 @@ def find_colors(
                    min_width, min_height)[0]
 
 
+def picture_around(x: int, y: int, width: int = 900,
+                   height: int = 560) -> tuple[np.ndarray, Region]:
+    """A screenshot centered on a point, kept inside the desktop.
+
+    Shown at life size rather than scaled down, because the question being
+    asked of it -- is this on the thing I meant? -- turns on a few pixels.
+    """
+    desktop_left, desktop_top, desktop_width, desktop_height = virtual_bounds()
+    width = min(width, desktop_width)
+    height = min(height, desktop_height)
+    left = min(max(x - width // 2, desktop_left), desktop_left + desktop_width - width)
+    top = min(max(y - height // 2, desktop_top), desktop_top + desktop_height - height)
+    region = (left, top, width, height)
+    return grab(region), region
+
+
+def mark_up(picture: np.ndarray, region: Region,
+            points: list[tuple[int, int]] | None = None,
+            boxes: list[Region] | None = None,
+            faint: list[tuple[int, int]] | None = None) -> np.ndarray:
+    """Draw click points and boxes onto a screenshot, in absolute coordinates."""
+    marked = picture.copy()
+    left, top = region[0], region[1]
+
+    for box in boxes or []:
+        cv2.rectangle(marked, (box[0] - left, box[1] - top),
+                      (box[0] + box[2] - left, box[1] + box[3] - top),
+                      (0, 230, 0), 2)
+    # Where it could land, for a step that picks a random spot.
+    for x, y in faint or []:
+        cv2.circle(marked, (x - left, y - top), 3, (255, 0, 255), -1)
+    for x, y in points or []:
+        at = (x - left, y - top)
+        cv2.line(marked, (at[0] - 26, at[1]), (at[0] + 26, at[1]), (0, 0, 0), 5)
+        cv2.line(marked, (at[0], at[1] - 26), (at[0], at[1] + 26), (0, 0, 0), 5)
+        cv2.line(marked, (at[0] - 26, at[1]), (at[0] + 26, at[1]), (60, 255, 255), 2)
+        cv2.line(marked, (at[0], at[1] - 26), (at[0], at[1] + 26), (60, 255, 255), 2)
+        cv2.circle(marked, at, 9, (0, 0, 0), 4)
+        cv2.circle(marked, at, 9, (60, 255, 255), 2)
+    return marked
+
+
 def explain_colors(
     region: Region,
     target_rgb: tuple[int, int, int],
