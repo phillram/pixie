@@ -318,19 +318,26 @@ def _search(
 
     blobs.sort(key=_sort_key(order))
 
+    desktop_left, desktop_top, desktop_width, desktop_height = virtual_bounds()
+    desktop_right = desktop_left + desktop_width
+    desktop_bottom = desktop_top + desktop_height
+
     hits: list[ColorHit] = []
     turned_down: list[tuple[ColorHit, str]] = []
     for blob_left, blob_top, width, height, area in blobs:
         left = region[0] + blob_left
         top = region[1] + blob_top
+        # Only count an edge as a crop if moving the search area could
+        # actually help. An area that already reaches the edge of the screen
+        # cannot be widened, so saying "widen the area" there is noise.
         touching = []
-        if blob_left <= 0:
+        if blob_left <= 0 and region[0] > desktop_left:
             touching.append("left")
-        if blob_top <= 0:
+        if blob_top <= 0 and region[1] > desktop_top:
             touching.append("top")
-        if blob_left + width >= region[2]:
+        if blob_left + width >= region[2] and region[0] + region[2] < desktop_right:
             touching.append("right")
-        if blob_top + height >= region[3]:
+        if blob_top + height >= region[3] and region[1] + region[3] < desktop_bottom:
             touching.append("bottom")
         hit = ColorHit(left + width // 2, top + height // 2,
                        left, top, width, height, area, " and ".join(touching))
