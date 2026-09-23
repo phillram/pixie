@@ -351,9 +351,17 @@ One level deep, deliberately. The file stays a flat list with one number per
 step, so reordering, sections and the save format are all untouched by it.
 
 `Give up after` is the timeout, and it is the setting that decides how long
-Pixie sits doing nothing. It defaults to 30 seconds on a step that waits for
-something, and 1 second on an "if it appears" step. Set it to 0 and it waits
-forever instead.
+Pixie sits doing nothing. Steps leave it alone by default and take the
+sequence-wide one from Settings, which starts at 3 seconds - so most steps
+need nothing here, and there is no row of thirty-second waits nobody meant.
+
+Set it on a step when that step is different. **The ones worth setting are the
+checks that run every time round a loop and usually find nothing**, because
+their wait is paid on every single pass: three such checks at 3 seconds is 9
+seconds of every loop spent waiting for things that are not there. A tenth of
+a second is often plenty for those.
+
+Set it to 0 and it waits forever instead.
 
 **If a cycle feels slow, this is almost always why.** An optional step whose
 image never appears costs its whole timeout on every single pass: two of them
@@ -418,7 +426,7 @@ That matters because everything is measured from the middle of a *patch*. If
 the patch is a 10x16 fragment of the left edge, its middle is on the left edge,
 and a step that clicks slightly below it clicks the wrong thing entirely.
 
-`Join pieces within (px)` is the fix. Set it to comfortably more than the
+`Join pieces up and down (px)` is the fix. Set it to comfortably more than the
 widest gap in the outline - 20 to 40 for a card border - and the pieces count
 as one patch again, whose middle is the middle of the card. On a test with two
 card borders broken into 48 fragments:
@@ -432,7 +440,7 @@ The log warns when it sees the pattern:
 
 ```
 3 patches matched, took the one furthest left.
-    If those are pieces of one outline, set 'Join pieces within' on this step
+    If those are pieces of one outline, set 'Join pieces up and down' on this step
 ```
 
 Once the whole outline is one patch, a following `Click the last thing found`
@@ -555,7 +563,7 @@ It only says this when a step aims at an *edge*. Aiming at the middle of a
 patch is barely affected by a small piece joined on; aiming at an edge means
 that piece decides where the click goes.
 
-To see which piece is the intruder, set `Join pieces within` to 0 and press
+To see which piece is the intruder, set `Join pieces up and down` to 0 and press
 **What matches?**. The pieces appear separately, and the one that is not part
 of the thing you want is obvious. Then either tighten `Tolerance` or raise
 `Min saturation` until it stops matching at all, or shrink the search area so

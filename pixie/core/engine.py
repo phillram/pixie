@@ -52,6 +52,10 @@ class Settings:
     # "off" disables it.
     toggle_key: str = "F9"
     poll_interval: float = 0.25
+    # How long any waiting step gives up after, unless it says otherwise.
+    # Almost every step wants the same number, and setting it on each one by
+    # hand is how a sequence ends up with a 30-second wait nobody meant.
+    wait_timeout: float = 3.0
     # Pauses are ranges. Set min and max the same for a fixed delay, or spread
     # them for a varying one.
     step_pause_min: float = 0.3
@@ -425,15 +429,19 @@ class Engine:
     def _timeout(self, step: dict[str, Any]) -> float:
         """How long this step may wait, honoring its section's ceiling.
 
-        The number itself comes from the step, or failing that from the
-        default its type declares -- never from a second copy kept here,
-        which is how two sources drift apart.
+        The number comes from the step when it sets one, and from the
+        sequence otherwise -- never from a second copy kept here, which is how
+        two sources drift apart. Most steps want the same wait, so most steps
+        should not be carrying their own.
 
         The section limit is a cap rather than a replacement: a step that
         already gives up sooner keeps its own time. A step set to wait forever
         (0) is the one this exists for, so the cap wins there outright.
         """
-        own = float(self._value(step, "timeout", 30.0))
+        own = self._value(step, "timeout", None)
+        if own is None:
+            own = self.sequence.settings.wait_timeout
+        own = float(own)
         if self.wait_limit is None:
             return own
         return self.wait_limit if own <= 0 else min(own, self.wait_limit)
@@ -632,17 +640,23 @@ class Engine:
         """
         if where == "middle":
             return
+        # "bottom_left" is a key, not English, and a corner is aimed at two
+        # edges at once - so both of them count as cut, not neither.
+        named = step_defs.ANCHOR_LABELS.get(where, where)
+        sides = where.split("_")
         if self.last_pieces > 1:
             self.log(f"    that patch is {self.last_pieces} separate pieces "
-                     f"joined together, so its {where} edge belongs to "
-                     "whichever piece sits furthest that way, which may not be "
-                     "part of what you are after. Set 'Join pieces within' to "
-                     "0 on the step that found it and press 'What matches?' to "
-                     "see the pieces on their own.", "warn")
-        if where in self.last_clipped:
-            self.log(f"    the {where} edge you are aiming at is where the "
-                     "search area was cut, not where the patch really ends. "
-                     "Widen the area on the step that found it.", "warn")
+                     f"joined together, so {named} belongs to whichever piece "
+                     "sits furthest that way, which may not be part of what "
+                     "you are after. Set 'Join pieces up and down' to 0 on the "
+                     "step that found it and press 'What matches?' to see the "
+                     "pieces on their own.", "warn")
+        cut = [side for side in sides if side in self.last_clipped]
+        if cut:
+            self.log(f"    you are aiming at {named}, and the "
+                     f"{' and '.join(cut)} of it is where the search area was "
+                     "cut rather than where the patch really ends. Widen the "
+                     "area on the step that found it.", "warn")
 
     def _which_one(self, step: dict[str, Any]) -> str:
         """Which of several patches was taken, and whether that looks wrong."""
@@ -656,7 +670,7 @@ class Engine:
         # it sends the click to the middle of a fragment.
         if self.last_candidates >= 3 and not int(self._value(step, "join", 0)):
             note += (".  If those are pieces of one outline, set 'Join pieces "
-                     "within' on this step")
+                     "up and down' on this step")
         return note
 
     @staticmethod

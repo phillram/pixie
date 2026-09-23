@@ -184,11 +184,15 @@ _TIMEOUT_HINT = (
     "How long to keep looking before giving up and doing whatever 'If not "
     "found' says. This is the setting that decides how long Pixie sits still "
     "when something does not turn up.\n"
+    "Left alone it uses the one in Settings, so most steps need nothing here. "
+    "Set it when this step is different: the checks that run every time round "
+    "a loop and usually find nothing are the ones worth shortening, because "
+    "their wait is paid on every single pass.\n"
     "**0 means wait forever**: she idles here until it appears, however long "
-    "that takes. Use it when the next steps make no sense without it.\n"
-    "A section's start point is usually the one to shorten - 30s of waiting "
-    "before moving on to the next section is 30s of nothing happening."
+    "that takes. Use it when the next steps make no sense without it."
 )
+_TIMEOUT_OFF = "Use the sequence-wide setting"
+_TIMEOUT_ON = "or instead, give up after"
 _JOIN_HINT = (
     "Counts pieces of color this close together as one thing.\n"
     "An outline is hardly ever one solid shape: a glow around a card is "
@@ -285,6 +289,12 @@ class Field:
     required: bool = False  # the step cannot run until this is filled in
     minimum: float = 1      # spinbox range, for the "integer" kind
     maximum: float = 10
+    # For an optional number: the Settings field its default comes from when
+    # the step leaves it alone, so the editor can show the value in force
+    # rather than making you go and look it up.
+    falls_back_to: str = ""
+    off_text: str = "Let every step decide for itself"
+    on_text: str = "or instead, never wait longer than"
 
 
 @dataclass(frozen=True)
@@ -330,7 +340,7 @@ def _wait_summary(step: dict[str, Any]) -> str:
 
 # Reusable field groups -------------------------------------------------
 
-def _image_fields(timeout: float, on_timeout: str) -> tuple[Field, ...]:
+def _image_fields(on_timeout: str) -> tuple[Field, ...]:
     return (
         Field("image", "image", "Image", "", required=True,
               hint="The picture to look for on screen."),
@@ -338,8 +348,9 @@ def _image_fields(timeout: float, on_timeout: str) -> tuple[Field, ...]:
               hint="Limit the scan to part of the screen. Much faster."),
         Field("confidence", "number", "How close a match (0-1)", 0.85,
               hint="1.00 is pixel perfect and too strict for most things. Lower matches more loosely, at the risk of matching the wrong thing. 0.85 is a good start."),
-        Field("timeout", "number", "Give up after (s)", timeout,
-              hint=_TIMEOUT_HINT),
+        Field("timeout", "limit", "Give up after (s)", None,
+              falls_back_to="wait_timeout", off_text=_TIMEOUT_OFF,
+              on_text=_TIMEOUT_ON, hint=_TIMEOUT_HINT),
         Field("on_timeout", "choice", "If it is not found, then", on_timeout, choices=ON_TIMEOUT),
     )
 
@@ -436,7 +447,9 @@ STEP_TYPES: dict[str, StepType] = {
                   hint="Checks a square this many pixels out, to absorb drift."),
             Field("mode", "choice", "Counts as a match when", "any", choices=COLOR_MODES,
                   hint="Averaging is steadier on a speckled or anti-aliased target; any-pixel reacts to the smallest trace of the color."),
-            Field("timeout", "number", "Give up after (s)", 30.0, hint=_TIMEOUT_HINT),
+            Field("timeout", "limit", "Give up after (s)", None,
+                  falls_back_to="wait_timeout", off_text=_TIMEOUT_OFF,
+                  on_text=_TIMEOUT_ON, hint=_TIMEOUT_HINT),
             Field("on_timeout", "choice", "If it never appears, then", "restart", choices=ON_TIMEOUT),
         ),
         describe=lambda s: f"Wait for color at {_point(s)}",
@@ -478,7 +491,9 @@ STEP_TYPES: dict[str, StepType] = {
                   choices=REACH_SIDES, hint=_REACH_HINT),
             Field("pick", "choice", "If several match, use", "largest",
                   choices=PICK_ORDERS, hint=_PICK_HINT),
-            Field("timeout", "number", "Give up after (s)", 30.0, hint=_TIMEOUT_HINT),
+            Field("timeout", "limit", "Give up after (s)", None,
+                  falls_back_to="wait_timeout", off_text=_TIMEOUT_OFF,
+                  on_text=_TIMEOUT_ON, hint=_TIMEOUT_HINT),
             Field("on_timeout", "choice", "If it never appears, then", "restart",
                   choices=ON_TIMEOUT),
         ),
@@ -519,8 +534,9 @@ STEP_TYPES: dict[str, StepType] = {
                   choices=REACH_SIDES, hint=_REACH_HINT),
             Field("pick", "choice", "If several match, use", "largest",
                   choices=PICK_ORDERS, hint=_PICK_HINT),
-            Field("timeout", "number", "Give it this long (s)", 1.0,
-                  hint="How long to give it before deciding it isn't there."),
+            Field("timeout", "limit", "Give it this long (s)", None,
+                  falls_back_to="wait_timeout", off_text=_TIMEOUT_OFF,
+                  on_text=_TIMEOUT_ON, hint=_TIMEOUT_HINT),
         ) + _CLICK_FIELDS,
         describe=lambda s: (f"If color appears, {_clicks_word(s).lower()} it"),
     ),
@@ -528,14 +544,14 @@ STEP_TYPES: dict[str, StepType] = {
         key="wait_for_image",
         label="Wait for an image",
         blurb="Pause until a picture appears. Does not click.",
-        fields=_image_fields(30.0, "restart"),
+        fields=_image_fields("restart"),
         describe=lambda s: f"Wait for {_stem(s.get('image'))}",
     ),
     "click_image": StepType(
         key="click_image",
         label="Click an image",
         blurb="Find a picture and click it. Waits for it to appear first.",
-        fields=_image_fields(10.0, "restart") + _CLICK_FIELDS,
+        fields=_image_fields("restart") + _CLICK_FIELDS,
         describe=lambda s: f"{_clicks_word(s)} {_stem(s.get('image'))}",
     ),
     "click_image_if_present": StepType(
@@ -548,8 +564,9 @@ STEP_TYPES: dict[str, StepType] = {
             Field("region", "region", "Search area", None),
             Field("confidence", "number", "How close a match (0-1)", 0.85,
                   hint="Lower matches more loosely. 0.85 is a good start."),
-            Field("timeout", "number", "Give it this long (s)", 1.0,
-                  hint="How long to give it before deciding it is not there."),
+            Field("timeout", "limit", "Give it this long (s)", None,
+                  falls_back_to="wait_timeout", off_text=_TIMEOUT_OFF,
+                  on_text=_TIMEOUT_ON, hint=_TIMEOUT_HINT),
         ) + _CLICK_FIELDS,
         describe=lambda s: f"If {_stem(s.get('image'))} appears, {_clicks_word(s).lower()} it",
     ),

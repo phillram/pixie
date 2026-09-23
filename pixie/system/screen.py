@@ -180,7 +180,7 @@ class ColorHit:
     # that touches an edge is probably a cut-off piece of something bigger,
     # which makes its size and its edges untrustworthy.
     clipped: str = ""
-    # How many separate runs of pixels 'Join pieces within' glued together to
+    # How many separate runs of pixels the join settings glued together to
     # make this one patch. More than one means the box is wider than anything
     # actually on screen, and its edges belong to whichever piece happens to
     # sit furthest out -- which may not be part of the thing you are after.

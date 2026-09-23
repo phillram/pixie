@@ -187,6 +187,26 @@ class SettingsDialog:
                 row=row, column=0, columnspan=2, sticky="w", pady=(0, 10))
             row += 1
 
+        ttk.Label(frame, text="Give up after").grid(
+            row=row, column=0, sticky="w", padx=(0, 14), pady=(4, 0))
+        wait_var = tk.StringVar(value=str(settings.wait_timeout))
+        wait_line = ttk.Frame(frame)
+        wait_line.grid(row=row, column=1, sticky="w", pady=(4, 0))
+        ttk.Entry(wait_line, textvariable=wait_var, width=7).pack(side="left")
+        ttk.Label(wait_line, text="seconds", style="Muted.TLabel").pack(
+            side="left", padx=(6, 0))
+        self.vars["wait_timeout"] = wait_var
+        row += 1
+        ttk.Label(frame, text="How long any step that waits for an image or a color "
+                              "keeps looking, unless that step says otherwise. Steps "
+                              "that run every time round a loop and usually find "
+                              "nothing are the ones worth setting individually - "
+                              "their wait is paid on every single pass.",
+                  style="Muted.TLabel", wraplength=int(440 * scale),
+                  justify="left").grid(row=row, column=0, columnspan=2,
+                                       sticky="w", pady=(0, 10))
+        row += 1
+
         ttk.Label(frame, text="How often to re-check").grid(
             row=row, column=0, sticky="w", padx=(0, 14), pady=(4, 0))
         poll_var = tk.StringVar(value=str(settings.poll_interval))
@@ -1576,15 +1596,23 @@ class App:
         holder = ttk.Frame(self.editor, style="Panel.TFrame")
         holder.grid(row=row, column=1, columnspan=2, sticky="w", pady=4)
 
-        off = tk.BooleanVar(value=not value)
-        amount = tk.StringVar(value=str(value) if value else "3")
+        off = tk.BooleanVar(value=value is None)
+        # What it falls back to, shown here rather than left for you to go and
+        # look up in Settings.
+        inherited = getattr(self.sequence.settings, spec.falls_back_to, None) \
+            if spec.falls_back_to else None
+        amount = tk.StringVar(
+            value=str(value) if value is not None
+            else (f"{inherited:g}" if inherited is not None else "3"))
 
-        check = ttk.Checkbutton(holder, text="Let every step decide for itself",
-                                variable=off)
+        off_text = spec.off_text
+        if inherited is not None:
+            off_text += f"  ({inherited:g}s)"
+        check = ttk.Checkbutton(holder, text=off_text, variable=off)
         check.pack(anchor="w")
         line = ttk.Frame(holder, style="Panel.TFrame")
         line.pack(anchor="w", pady=(4, 0))
-        ttk.Label(line, text="or instead, never wait longer than",
+        ttk.Label(line, text=spec.on_text,
                   style="Panel.TLabel").pack(side="left")
         # Parented to the line, not the holder: a widget packs inside its own
         # parent whatever you pack it into, so getting this wrong puts the box

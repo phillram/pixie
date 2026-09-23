@@ -105,6 +105,8 @@ def main() -> int:
     failures.extend(_check_restart_section())
     failures.extend(_check_a_check_guards_its_indented_steps())
     failures.extend(_check_a_jump_sends_the_run_somewhere())
+    failures.extend(_check_the_sequence_wide_timeout())
+    failures.extend(_check_the_aim_warning_reads_as_english())
     failures.extend(_check_parking_and_gliding())
     failures.extend(_check_a_near_miss_reports_its_score())
     failures.extend(_check_max_cycles_is_a_real_limit())
@@ -555,6 +557,93 @@ def _check_a_near_miss_reports_its_score() -> list[str]:
         screen.best_score = original
     if said:
         problems.append(f"a broken diagnostic said something anyway: {said}")
+    return problems
+
+
+def _check_the_sequence_wide_timeout() -> list[str]:
+    """A step with no wait of its own takes the sequence's.
+
+    Setting the same number on every step by hand is how a sequence ends up
+    with a thirty-second wait nobody meant, sitting in the middle of a loop.
+    """
+    problems = []
+    settings = engine_mod.Settings(wait_timeout=3.0)
+    runner = engine_mod.Engine(engine_mod.Sequence(name="waits",
+                                                   settings=settings))
+
+    borrowed = runner._timeout({"type": "wait_for_image"})
+    if borrowed != 3.0:
+        problems.append(f"a step with no wait of its own took {borrowed}s, "
+                        "expected the sequence's 3s")
+
+    own = runner._timeout({"type": "wait_for_image", "timeout": 0.5})
+    if own != 0.5:
+        problems.append(f"a step with its own 0.5s took {own}s instead")
+
+    # Changing the sequence changes every step that has not opted out.
+    settings.wait_timeout = 8.0
+    if runner._timeout({"type": "wait_for_image"}) != 8.0:
+        problems.append("changing the sequence-wide wait did not reach a step")
+    if runner._timeout({"type": "wait_for_image", "timeout": 0.5}) != 0.5:
+        problems.append("changing the sequence-wide wait overrode a step "
+                        "that had set its own")
+
+    # A section cap still trumps both, which is what a cap is for.
+    runner.wait_limit = 2.0
+    capped = [runner._timeout({"type": "wait_for_image"}),
+              runner._timeout({"type": "wait_for_image", "timeout": 30.0}),
+              runner._timeout({"type": "wait_for_image", "timeout": 0.5})]
+    if capped != [2.0, 2.0, 0.5]:
+        problems.append(f"under a 2s section cap the waits came out {capped}, "
+                        "expected [2.0, 2.0, 0.5]")
+    runner.wait_limit = None
+
+    # Every step type that waits declares no wait of its own now, so every
+    # one of them follows the sequence.
+    settings.wait_timeout = 4.0
+    borrowing = []
+    for key, step_type in step_defs.STEP_TYPES.items():
+        if not any(f.key == "timeout" for f in step_type.fields):
+            continue
+        fresh = step_defs.new_step(key)
+        if fresh.get("timeout") is not None:
+            problems.append(f"{key} still ships with its own wait, "
+                            f"{fresh['timeout']}")
+        elif runner._timeout(fresh) == 4.0:
+            borrowing.append(key)
+    print(f"Sequence waits  : {len(borrowing)} step types follow the sequence, "
+          "a step that sets its own keeps it, a section cap beats both")
+    return problems
+
+
+def _check_the_aim_warning_reads_as_english() -> list[str]:
+    """A corner is two edges, and neither of them is called 'bottom_left'."""
+    said: list[str] = []
+    runner = engine_mod.Engine(
+        engine_mod.Sequence(name="aim"),
+        emit=lambda event: said.append(str(event.get("message", "")))
+        if event.get("level") == "warn" else None)
+
+    problems = []
+    runner.last_pieces, runner.last_clipped = 3, "top and left"
+    runner._aim_warning("bottom_left")
+    joined = " ".join(said)
+    if "bottom_left" in joined:
+        problems.append(f"a field key leaked into the log: {joined!r}")
+    if "its bottom-left corner" not in joined:
+        problems.append(f"the corner was not named in English: {joined!r}")
+    # Aiming at a corner aims at two edges; the left one really was cut.
+    if "left" not in joined or "cut" not in joined:
+        problems.append("aiming at a corner whose left edge was cut said "
+                        f"nothing about it: {joined!r}")
+    print("Aim warning     : " + [line for line in said if "cut" in line][0].strip()[:78])
+
+    # The bottom was not cut, so it must not be named as though it were.
+    said.clear()
+    runner.last_pieces, runner.last_clipped = 1, "left"
+    runner._aim_warning("bottom_right")
+    if said:
+        problems.append(f"a corner with no cut edge still warned: {said}")
     return problems
 
 
