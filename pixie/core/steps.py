@@ -133,6 +133,18 @@ _TIMEOUT_HINT = (
     "A section's start point is usually the one to shorten - 30s of waiting "
     "before moving on to the next section is 30s of nothing happening."
 )
+_JOIN_HINT = (
+    "Counts pieces of color this close together as one thing.\n"
+    "An outline is hardly ever one solid shape: a glow around a card is "
+    "broken up by whatever overlaps it, by anti-aliasing, and by its corners "
+    "fading out, so it arrives as a handful of separate pieces. At 0 each "
+    "piece counts on its own, which is why a row of highlighted cards can "
+    "come back as forty specks and 'furthest left' picks the leftmost speck "
+    "rather than the leftmost card.\n"
+    "Set it to comfortably more than the widest gap in the outline - 20 to 40 "
+    "for a card border - and the whole outline becomes one patch whose middle "
+    "is the middle of the card."
+)
 _PICK_HINT = (
     "Several patches of the color can be on screen at once - a row of cards "
     "all glowing, for instance. This decides which one Pixie goes for.\n"
@@ -325,6 +337,8 @@ STEP_TYPES: dict[str, StepType] = {
             Field("min_pixels", "integer", "Smallest patch (pixels)", 40, minimum=1, maximum=100000,
                   hint="Ignore patches smaller than this many pixels, so stray "
                        "matching pixels elsewhere don't count."),
+            Field("join", "integer", "Join pieces within (px)", 0,
+                  minimum=0, maximum=400, hint=_JOIN_HINT),
             Field("pick", "choice", "If several match, use", "largest",
                   choices=PICK_ORDERS, hint=_PICK_HINT),
             Field("timeout", "number", "Give up after (s)", 30.0, hint=_TIMEOUT_HINT),
@@ -354,6 +368,8 @@ STEP_TYPES: dict[str, StepType] = {
             Field("min_pixels", "integer", "Smallest patch (pixels)", 40,
                   minimum=1, maximum=100000,
                   hint="Ignore patches smaller than this, so a few stray matching pixels elsewhere don't count as a find."),
+            Field("join", "integer", "Join pieces within (px)", 0,
+                  minimum=0, maximum=400, hint=_JOIN_HINT),
             Field("pick", "choice", "If several match, use", "largest",
                   choices=PICK_ORDERS, hint=_PICK_HINT),
             Field("timeout", "number", "Give it this long (s)", 1.0,

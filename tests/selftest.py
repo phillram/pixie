@@ -95,6 +95,7 @@ def main() -> int:
     failures.extend(_check_max_cycles_is_a_real_limit())
     failures.extend(_check_section_limits())
     failures.extend(_check_pick_order())
+    failures.extend(_check_broken_outlines_join_up())
     failures.extend(_check_every_wait_respects_the_cap())
     failures.extend(_check_declared_defaults())
     failures.extend(_check_click_box())
@@ -474,6 +475,78 @@ def _check_pick_order() -> list[str]:
     if found["leftmost"].x == found["largest"].x:
         problems.append("'leftmost' and 'largest' chose the same patch, so the "
                         "test proves nothing")
+    return problems
+
+
+def _check_broken_outlines_join_up() -> list[str]:
+    """A glowing card border arrives in pieces and must count as one thing.
+
+    This is the shape of a real failure: two highlighted cards, each outlined
+    by a border that anti-aliasing and overlap have broken into fragments.
+    Ranked as fragments, 'furthest left' picks the leftmost speck and its
+    middle is nowhere near the middle of the card.
+    """
+    from pixie.system import screen as screen_mod
+
+    frame = np.zeros((600, 1200, 3), dtype=np.uint8)
+    cyan = (254, 254, 37)  # BGR
+
+    def broken_outline(left, top, width, height, dash=26, gap=14):
+        """A rectangle border drawn as dashes, like a partly hidden glow."""
+        for x in range(left, left + width, dash + gap):
+            frame[top:top + 4, x:min(x + dash, left + width)] = cyan
+            frame[top + height - 4:top + height, x:min(x + dash, left + width)] = cyan
+        for y in range(top, top + height, dash + gap):
+            frame[y:min(y + dash, top + height), left:left + 4] = cyan
+            frame[y:min(y + dash, top + height), left + width - 4:left + width] = cyan
+
+    broken_outline(100, 150, 200, 300)    # left card
+    broken_outline(700, 150, 200, 300)    # right card
+    left_middle = (100 + 100, 150 + 150)
+    right_middle = (700 + 100, 150 + 150)
+
+    original = screen_mod.grab
+    screen_mod.grab = lambda _region=None: frame
+    try:
+        common = dict(region=(0, 0, 1200, 600), target_rgb=(37, 254, 254),
+                      tolerance=14, min_pixels=40, match="hue", order="leftmost")
+        loose = screen_mod.find_colors(**common)
+        joined = screen_mod.find_colors(join=20, **common)
+    finally:
+        screen_mod.grab = original
+
+    problems = []
+    print(f"Broken outline  : {len(loose)} pieces on their own, "
+          f"{len(joined)} once joined")
+
+    if len(loose) < 8:
+        problems.append(f"the test outline only broke into {len(loose)} pieces, "
+                        "so it does not reproduce the problem")
+    if len(joined) != 2:
+        problems.append(f"joining gave {len(joined)} patches, expected one per card")
+        return problems
+
+    first, second = joined
+    if (first.x, first.y) != left_middle:
+        problems.append(f"the joined left outline reports {first.center}, "
+                        f"expected the middle of the card at {left_middle}")
+    if (second.x, second.y) != right_middle:
+        problems.append(f"the joined right outline reports {second.center}, "
+                        f"expected {right_middle}")
+
+    # The point of the fix: unjoined, the leftmost piece is a fragment whose
+    # middle is well away from the middle of the card.
+    off_by = abs(loose[0].x - left_middle[0]) + abs(loose[0].y - left_middle[1])
+    if off_by < 50:
+        problems.append("the unjoined fragment was already near the card middle, "
+                        "so this proves nothing")
+    else:
+        print(f"                  unjoined, the first piece is {off_by}px away "
+              f"from the middle of the card")
+
+    # Joining must not glue two separate cards together.
+    if joined[0].left > 300 or joined[1].left < 600:
+        problems.append("joining merged the two cards into one patch")
     return problems
 
 

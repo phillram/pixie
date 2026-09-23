@@ -235,6 +235,7 @@ def find_colors(
     min_saturation: int = 90,
     min_brightness: int = 70,
     order: str = "largest",
+    join: int = 0,
 ) -> list[ColorHit]:
     """Every patch of `target_rgb` inside `region`, in the order asked for.
 
@@ -249,6 +250,11 @@ def find_colors(
     `order` decides which patch comes first when several match at once:
     "largest" (the default, and what Pixie has always done), or by position --
     "leftmost" works through a row of cards in the order you would read them.
+
+    `join` treats fragments within that many pixels of each other as one
+    patch. An outline around something is almost never one connected blob, so
+    without this a row of five highlighted cards can arrive as forty specks,
+    and "leftmost" picks the leftmost speck rather than the leftmost card.
 
     Patches with fewer than `min_pixels` pixels are dropped, which keeps stray
     anti-aliased pixels from counting as a hit.
@@ -266,14 +272,42 @@ def find_colors(
 
     # Connected blobs, so two separate glows don't average into a meaningless
     # point between them.
-    count, _, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
-    blobs = [
-        (int(stats[n, cv2.CC_STAT_LEFT]), int(stats[n, cv2.CC_STAT_TOP]),
-         int(stats[n, cv2.CC_STAT_WIDTH]), int(stats[n, cv2.CC_STAT_HEIGHT]),
-         int(stats[n, cv2.CC_STAT_AREA]))
-        for n in range(1, count)
-        if int(stats[n, cv2.CC_STAT_AREA]) >= min_pixels
-    ]
+    #
+    # An outline is rarely one connected blob: a glow around a card is broken
+    # up by whatever overlaps it, by anti-aliasing, and by the corners fading
+    # out, so it arrives as a handful of fragments. Grouping is done on a
+    # fattened copy of the mask, which bridges gaps up to `join` pixels, while
+    # the box each group reports is measured from the real pixels -- so
+    # joining changes what counts as one thing, not where that thing is.
+    grouping = mask
+    if join > 0:
+        span = int(join) * 2 + 1
+        grouping = cv2.dilate(mask, np.ones((span, span), np.uint8))
+
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(
+        grouping, connectivity=8)
+
+    blobs = []
+    for n in range(1, count):
+        if join > 0:
+            member = (labels == n) & (mask > 0)
+            area = int(np.count_nonzero(member))
+            if area < min_pixels:
+                continue
+            rows, columns = np.nonzero(member)
+            blob_left, blob_top = int(columns.min()), int(rows.min())
+            width = int(columns.max()) - blob_left + 1
+            height = int(rows.max()) - blob_top + 1
+        else:
+            area = int(stats[n, cv2.CC_STAT_AREA])
+            if area < min_pixels:
+                continue
+            blob_left = int(stats[n, cv2.CC_STAT_LEFT])
+            blob_top = int(stats[n, cv2.CC_STAT_TOP])
+            width = int(stats[n, cv2.CC_STAT_WIDTH])
+            height = int(stats[n, cv2.CC_STAT_HEIGHT])
+        blobs.append((blob_left, blob_top, width, height, area))
+
     blobs.sort(key=_sort_key(order))
 
     hits = []
@@ -294,10 +328,11 @@ def find_color(
     min_saturation: int = 90,
     min_brightness: int = 70,
     order: str = "largest",
+    join: int = 0,
 ) -> ColorHit | None:
     """The one patch of `target_rgb` that `order` puts first. See find_colors."""
     hits = find_colors(region, target_rgb, tolerance, min_pixels, match,
-                       min_saturation, min_brightness, order)
+                       min_saturation, min_brightness, order, join)
     return hits[0] if hits else None
 
 

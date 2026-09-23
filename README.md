@@ -253,6 +253,42 @@ along with what proportion of your selection those settings would match.
 
 Use `rgb` mode instead for flat, solid colors that do not change.
 
+## An outline is not one shape
+
+This is the thing that will bite you, so it is worth understanding before you
+build anything around a glowing border.
+
+A highlight around a card or a button is almost never one connected patch of
+color. Whatever overlaps it cuts it up, anti-aliasing softens its edges, and
+its corners fade out, so what the matcher actually sees is a scattering of
+fragments. A single card outline can arrive as a dozen separate pieces.
+
+That matters because everything is measured from the middle of a *patch*. If
+the patch is a 10x16 fragment of the left edge, its middle is on the left edge,
+and a step that clicks slightly below it clicks the wrong thing entirely.
+
+`Join pieces within (px)` is the fix. Set it to comfortably more than the
+widest gap in the outline - 20 to 40 for a card border - and the pieces count
+as one patch again, whose middle is the middle of the card. On a test with two
+card borders broken into 48 fragments:
+
+| Join | Patches found | Middle of the first one |
+| --- | --- | --- |
+| 0 | 48 | 224px away from the card's middle |
+| 20 | 2 | exactly the card's middle |
+
+The log warns when it sees the pattern:
+
+```
+3 patches matched, took the one furthest left.
+    If those are pieces of one outline, set 'Join pieces within' on this step
+```
+
+Once the whole outline is one patch, a following `Click the last thing found`
+wants an offset of `0, 0`: the middle of the outline is already the middle of
+the card. An offset was only ever needed to compensate for landing on a
+fragment.
+
 ## Several things glowing at once
 
 A row of cards can all be highlighted at the same time. `If several match,

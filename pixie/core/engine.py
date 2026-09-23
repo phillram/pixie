@@ -377,6 +377,7 @@ class Engine:
             min_saturation=int(self._value(step, "min_saturation", 90)),
             min_brightness=int(self._value(step, "min_brightness", 70)),
             order=self._value(step, "pick", "largest"),
+            join=int(self._value(step, "join", 0)),
         )
         # Keep the count for the log: "1 of 3" is the difference between
         # picking the right card and picking one at random.
@@ -384,12 +385,19 @@ class Engine:
         return hits[0] if hits else None
 
     def _which_one(self, step: dict[str, Any]) -> str:
-        """', 1 of 4 - the one furthest left' when there was a choice to make."""
+        """Which of several patches was taken, and whether that looks wrong."""
         if self.last_candidates <= 1:
             return ""
         order = self._value(step, "pick", "largest")
-        return (f" - {self.last_candidates} patches matched, took "
+        note = (f" - {self.last_candidates} patches matched, took "
                 f"{step_defs.PICK_LABELS.get(order, order)}")
+        # A handful of patches with no joining is the signature of one broken
+        # outline being read as many specks, which is worth saying out loud:
+        # it sends the click to the middle of a fragment.
+        if self.last_candidates >= 3 and not int(self._value(step, "join", 0)):
+            note += (".  If those are pieces of one outline, set 'Join pieces "
+                     "within' on this step")
+        return note
 
     @staticmethod
     def _color_description(step: dict[str, Any]) -> str:
