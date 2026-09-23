@@ -168,6 +168,13 @@ class ColorHit:
     width: int
     height: int
     pixels: int     # how many pixels actually matched
+    # The middle of the shape along each of its four edges. On anything that
+    # is not a filled rectangle -- a tilted card, an outline, several things
+    # at different heights -- these are nowhere near the middle of the box.
+    left_y: int = 0
+    right_y: int = 0
+    top_x: int = 0
+    bottom_x: int = 0
     # Which edges of the search area this patch runs into, if any. A patch
     # that touches an edge is probably a cut-off piece of something bigger,
     # which makes its size and its edges untrustworthy.
@@ -220,6 +227,9 @@ PICK_ORDERS = ("largest", "leftmost", "rightmost", "topmost", "bottommost")
 
 # How close to the edge of the screen counts as being at it.
 EDGE_SLACK = 4
+# How many pixels in from an edge still count as "on" that edge, when working
+# out where the middle of a shape's edge is.
+EDGE_BAND = 3
 
 
 def _sort_key(order: str):
@@ -302,22 +312,42 @@ def _search(
 
     blobs = []
     for n in range(1, count):
+        # Work inside the blob's own box rather than over the whole area.
+        box_left = int(stats[n, cv2.CC_STAT_LEFT])
+        box_top = int(stats[n, cv2.CC_STAT_TOP])
+        window = (slice(box_top, box_top + int(stats[n, cv2.CC_STAT_HEIGHT])),
+                  slice(box_left, box_left + int(stats[n, cv2.CC_STAT_WIDTH])))
+        member = labels[window] == n
         if join > 0:
-            member = (labels == n) & (mask > 0)
-            area = int(np.count_nonzero(member))
-            if not area:
-                continue
-            rows, columns = np.nonzero(member)
-            blob_left, blob_top = int(columns.min()), int(rows.min())
-            width = int(columns.max()) - blob_left + 1
-            height = int(rows.max()) - blob_top + 1
-        else:
-            area = int(stats[n, cv2.CC_STAT_AREA])
-            blob_left = int(stats[n, cv2.CC_STAT_LEFT])
-            blob_top = int(stats[n, cv2.CC_STAT_TOP])
-            width = int(stats[n, cv2.CC_STAT_WIDTH])
-            height = int(stats[n, cv2.CC_STAT_HEIGHT])
-        blobs.append((blob_left, blob_top, width, height, area))
+            # Grouping was done on a fattened copy, so measure the real pixels.
+            member &= mask[window] > 0
+        area = int(np.count_nonzero(member))
+        if not area:
+            continue
+
+        rows, columns = np.nonzero(member)
+        first_row, last_row = int(rows.min()), int(rows.max())
+        first_column, last_column = int(columns.min()), int(columns.max())
+        blob_left, blob_top = box_left + first_column, box_top + first_row
+        width = last_column - first_column + 1
+        height = last_row - first_row + 1
+
+        # Where each edge of the *shape* sits, not of the box around it. A
+        # tilted card, or several of them at different heights, puts the box's
+        # middle somewhere the shape never goes -- so aiming at "the left
+        # edge" has to mean the middle of the pixels actually on that edge.
+        edge = EDGE_BAND
+        along_left = rows[columns <= first_column + edge]
+        along_right = rows[columns >= last_column - edge]
+        along_top = columns[rows <= first_row + edge]
+        along_bottom = columns[rows >= last_row - edge]
+        blobs.append((
+            blob_left, blob_top, width, height, area,
+            box_top + int(np.median(along_left)),
+            box_top + int(np.median(along_right)),
+            box_left + int(np.median(along_top)),
+            box_left + int(np.median(along_bottom)),
+        ))
 
     blobs.sort(key=_sort_key(order))
 
@@ -327,7 +357,8 @@ def _search(
 
     hits: list[ColorHit] = []
     turned_down: list[tuple[ColorHit, str]] = []
-    for blob_left, blob_top, width, height, area in blobs:
+    for (blob_left, blob_top, width, height, area,
+         left_y, right_y, top_x, bottom_x) in blobs:
         left = region[0] + blob_left
         top = region[1] + blob_top
         # Only count an edge as a crop if moving the search area could
@@ -348,7 +379,10 @@ def _search(
                 and region[1] + region[3] < desktop_bottom - EDGE_SLACK):
             touching.append("bottom")
         hit = ColorHit(left + width // 2, top + height // 2,
-                       left, top, width, height, area, " and ".join(touching))
+                       left, top, width, height, area,
+                       left_y=region[1] + left_y, right_y=region[1] + right_y,
+                       top_x=region[0] + top_x, bottom_x=region[0] + bottom_x,
+                       clipped=" and ".join(touching))
         # Why a patch is not the thing we are looking for, kept as words so
         # the GUI can show it rather than leaving you to guess.
         if area < min_pixels:

@@ -109,6 +109,7 @@ def main() -> int:
     failures.extend(_check_broken_outlines_join_up())
     failures.extend(_check_background_of_the_same_color())
     failures.extend(_check_aiming_at_an_edge())
+    failures.extend(_check_edges_follow_the_shape())
     failures.extend(_check_every_wait_respects_the_cap())
     failures.extend(_check_declared_defaults())
     failures.extend(_check_click_box())
@@ -688,6 +689,81 @@ def _check_aiming_at_an_edge() -> list[str]:
     if clicks[-1] != runner.last_match:
         problems.append(f"without a box it clicked {clicks[-1]}, expected "
                         f"{runner.last_match}")
+    return problems
+
+
+def _check_edges_follow_the_shape() -> list[str]:
+    """An edge anchor must land on the shape, not on the box around it.
+
+    Cards in a fan are tilted and sit at different heights, so the box round
+    a merged group belongs to no single card: its top edge comes from the
+    highest card and its left edge from the lowest. Aiming at the middle of
+    that box put a real click three pixels inside a card's top frame.
+    """
+    from pixie.system import screen as screen_mod
+
+    def hsv(h, s, v):
+        return tuple(int(c) for c in cv2.cvtColor(
+            np.array([[[h, s, v]]], dtype=np.uint8), cv2.COLOR_HSV2BGR)[0, 0])
+
+    glow = hsv(90, 250, 250)
+    frame = np.zeros((500, 700, 3), dtype=np.uint8)
+
+    def outline(left, top):
+        """A card outline 200x240, drawn as a ring."""
+        frame[top:top + 10, left:left + 200] = glow
+        frame[top + 230:top + 240, left:left + 200] = glow
+        frame[top:top + 240, left:left + 10] = glow
+        frame[top:top + 240, left + 190:left + 200] = glow
+
+    outline(40, 240)     # the left card, sitting low
+    outline(230, 0)      # the middle card, sitting high
+    outline(420, 20)     # the right card
+    left_card_middle_y = 240 + 120
+
+    original = screen_mod.grab
+    screen_mod.grab = lambda _region=None: frame
+    try:
+        hit = screen_mod.find_colors((0, 0, 700, 500), (37, 254, 254),
+                                     tolerance=14, min_pixels=39, match="hue",
+                                     order="leftmost", join=30)[0]
+    finally:
+        screen_mod.grab = original
+
+    problems = []
+    print(f"Edge follows    : merged {hit.width}x{hit.height}, box middle "
+          f"y={hit.y}, shape's left edge y={hit.left_y}")
+
+    if hit.width < 500:
+        problems.append(f"the three cards did not merge ({hit.width}px wide), "
+                        "so this proves nothing")
+    # The box's middle has to be useless for the left card, or the test is
+    # idle. Landing within a few pixels of its top edge is exactly the real
+    # failure: technically on the card, practically on its frame.
+    if abs(hit.y - 240) > 15:
+        problems.append(f"the box middle y={hit.y} is not on the left card's "
+                        "top edge, so the failure is not being reproduced")
+    if abs(hit.left_y - left_card_middle_y) > 15:
+        problems.append(f"the left edge reports y={hit.left_y}, expected near "
+                        f"{left_card_middle_y} - the middle of the left card")
+
+    # Aiming has to use it.
+    runner = engine_mod.Engine(engine_mod.Sequence(name="aim", steps=[]),
+                               dry_run=True)
+    box = (hit.left, hit.top, hit.width, hit.height)
+    edges = runner._edges_of(hit)
+    step = {"type": "click_last_match", "anchor": "left", "offset": [100, 0]}
+    aimed = runner._aim(step, box, edges)
+    if not (280 <= aimed[1] <= 440):
+        problems.append(f"aiming at the left edge gave y={aimed[1]}, which is "
+                        "not comfortably inside the left card (240-480)")
+    without = runner._aim(step, box, None)
+    if without[1] == aimed[1]:
+        problems.append("the shape made no difference, so it is not being used")
+
+    # A template match is a rectangle, so it has nothing to follow and says so.
+    if runner._edges_of(screen.Match(10, 20, 30, 40, 1.0)) is not None:
+        problems.append("an image match claimed to know where its shape is")
     return problems
 
 

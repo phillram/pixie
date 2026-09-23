@@ -102,7 +102,11 @@ _ANCHOR_HINT = (
     "targets can sit side by side and be found as one: two highlighted cards "
     "touching become one wide patch, and its middle falls between them. Aim "
     "at the left edge with an offset to the right, and you land on the left "
-    "one whether they merged or not."
+    "one whether they merged or not.\n"
+    "An edge follows the shape rather than the box round it, so it works on "
+    "things that are tilted or at different heights - the left edge of a fan "
+    "of cards is measured on the card that is actually there, not on the "
+    "middle of a box that belongs to no card at all."
 )
 
 # Which patch to use when several match at once. The list itself comes from

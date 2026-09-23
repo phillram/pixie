@@ -211,6 +211,8 @@ class Engine:
         # its edges. Two highlighted things side by side can arrive as one
         # patch, and the middle of that patch is the gap between them.
         self.last_box: tuple[int, int, int, int] | None = None
+        # Where that match met each of its edges, when it could tell us.
+        self.last_edges: dict[str, int] | None = None
 
     # -- plumbing --------------------------------------------------------
 
@@ -254,16 +256,25 @@ class Engine:
     def _region(value: Any) -> tuple[int, int, int, int] | None:
         return tuple(value) if value else None  # type: ignore[return-value]
 
-    def _aim(self, step: dict[str, Any],
-             box: tuple[int, int, int, int]) -> tuple[int, int]:
+    def _aim(self, step: dict[str, Any], box: tuple[int, int, int, int],
+             edges: dict[str, int] | None = None) -> tuple[int, int]:
         """Where to click on something that was found: anchor, then offset.
 
         Anchoring somewhere other than the middle is what saves you when two
         targets side by side are found as one patch -- its middle lands in the
         gap between them, while its left edge is still the left one's edge.
+
+        An edge anchor follows the shape, not the box around it. Cards in a
+        fan are tilted, and each sits at a different height, so the middle of
+        the box is not on any of them: the left edge of the box belongs to the
+        lowest card, the top edge to the highest. `edges` carries where the
+        shape actually sits along each of its edges, and without it there is
+        nothing better to do than use the box.
         """
         left, top, width, height = box
         anchor = str(self._value(step, "anchor", "middle"))
+        edges = edges or {}
+
         if "left" in anchor:
             x = left
         elif "right" in anchor:
@@ -277,8 +288,23 @@ class Engine:
         else:
             y = top + height // 2
 
+        # A plain edge (not a corner) takes its other coordinate from where
+        # the shape crosses that edge.
+        if anchor in ("left", "right") and anchor in edges:
+            y = edges[anchor]
+        elif anchor in ("top", "bottom") and anchor in edges:
+            x = edges[anchor]
+
         off_x, off_y = step.get("offset") or (0, 0)
         return x + int(off_x), y + int(off_y)
+
+    @staticmethod
+    def _edges_of(hit: Any) -> dict[str, int] | None:
+        """Where a colour patch meets each of its edges, if it can say."""
+        if not hasattr(hit, "left_y"):
+            return None  # an image match is a rectangle; its box is the truth
+        return {"left": hit.left_y, "right": hit.right_y,
+                "top": hit.top_x, "bottom": hit.bottom_x}
 
     def _click(self, x: int, y: int, step: dict[str, Any], what: str) -> None:
         clicks = int(self._value(step, "clicks", 1) or 1)
@@ -471,16 +497,19 @@ class Engine:
         if hit is None:
             self.last_match = None
             self.last_box = None
+            self.last_edges = None
             self.log(f"    no {self._color_description(step)} "
                      f"{self._gave_up(self._timeout(step))}, skipping")
             return "ok"
 
         self.last_match = hit.center
         self.last_box = (hit.left, hit.top, hit.width, hit.height)
+        self.last_edges = self._edges_of(hit)
         self.log(f"    found it - {hit.pixels} pixels in a "
                  f"{hit.width}x{hit.height} box{self._which_one(step)}")
         self._edge_warning(hit, step)
-        self._click(*self._aim(step, self.last_box), step, "the color")
+        self._click(*self._aim(step, self.last_box, self.last_edges), step,
+                    "the color")
         return "ok"
 
     def _do_wait_for_color_in_area(self, step: dict[str, Any]) -> str:
@@ -500,12 +529,14 @@ class Engine:
             # thing found" to pick up and click somewhere wrong.
             self.last_match = None
             self.last_box = None
+            self.last_edges = None
             self.log(f"    no patch of RGB{target} at least {min_pixels}px "
                      f"in that area {self._gave_up(self._timeout(step))}",
                      "warn")
             return "timeout"
         self.last_match = hit.center
         self.last_box = (hit.left, hit.top, hit.width, hit.height)
+        self.last_edges = self._edges_of(hit)
         self.log(f"    found RGB{target} - {hit.pixels} pixels in a "
                  f"{hit.width}x{hit.height} box, center {hit.x}, {hit.y}"
                  f"{self._which_one(step)}")
@@ -518,11 +549,13 @@ class Engine:
         if match is None:
             self.last_match = None
             self.last_box = None
+            self.last_edges = None
             self.log(f"    {Path(step['image']).name} did not appear "
                      f"{self._gave_up(waited)}", "warn")
             return "timeout"
         self.last_match = match.center
         self.last_box = (match.x, match.y, match.width, match.height)
+        self.last_edges = None
         self.log(f"    found {Path(step['image']).name} at {match.x}, {match.y} "
                  f"(score {match.score:.3f})")
         return "ok"
@@ -533,11 +566,13 @@ class Engine:
         if match is None:
             self.last_match = None
             self.last_box = None
+            self.last_edges = None
             self.log(f"    {Path(step['image']).name} did not appear "
                      f"{self._gave_up(waited)}", "warn")
             return "timeout"
         self.last_match = match.center
         self.last_box = (match.x, match.y, match.width, match.height)
+        self.last_edges = None
         self.log(f"    found {Path(step['image']).name} at {match.x}, {match.y} "
                  f"(score {match.score:.3f})")
         self._click(*self._aim(step, self.last_box), step,
@@ -549,11 +584,13 @@ class Engine:
         if match is None:
             self.last_match = None
             self.last_box = None
+            self.last_edges = None
             self.log(f"    {Path(step['image']).name} not there "
                      f"{self._gave_up(self._timeout(step))}, skipping")
             return "ok"
         self.last_match = match.center
         self.last_box = (match.x, match.y, match.width, match.height)
+        self.last_edges = None
         self._click(*self._aim(step, self.last_box), step,
                     Path(step["image"]).name)
         return "ok"
@@ -583,10 +620,11 @@ class Engine:
                      "nothing to click", "error")
             return "timeout"
         box = self.last_box or (self.last_match[0], self.last_match[1], 1, 1)
+        edges = self.last_edges
         where = str(self._value(step, "anchor", "middle"))
         what = ("last match" if where == "middle"
                 else f"last match ({step_defs.ANCHOR_LABELS.get(where, where)})")
-        self._click(*self._aim(step, box), step, what)
+        self._click(*self._aim(step, box, edges), step, what)
         return "ok"
 
     def _do_press_key(self, step: dict[str, Any]) -> str:
@@ -846,6 +884,7 @@ class Engine:
                     self.emit({"kind": "cycle", "completed": self.cycles_completed})
                 self.last_match = None
                 self.last_box = None
+                self.last_edges = None
                 self._sleep(self.sequence.settings.cycle_pause())
             else:
                 reason = f"finished {max_cycles} cycle(s)"

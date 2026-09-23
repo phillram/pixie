@@ -366,6 +366,22 @@ exactly the seam - while the left edge plus 90 lands at 290, well inside the
 left card. It works the same whether the cards merged that frame or not,
 which is what makes it reliable rather than lucky.
 
+An edge follows the **shape**, not the box around it. That distinction is the
+whole thing on a fan of cards: they lean different ways and sit at different
+heights, so the box round a merged group belongs to no card at all - its top
+edge comes from the highest card, its left edge from the lowest. Aiming at
+"the left edge" measures where the shape actually crosses that edge, so it
+lands on the card that is really there:
+
+| | y |
+| --- | --- |
+| Middle of the box | 240 - the left card's top frame |
+| Where the shape meets the left edge | 359 - the middle of that card |
+
+Corners still use the box, because a corner of a shape is not a well defined
+thing. Image matches are rectangles, so their box is the truth and there is
+nothing to follow.
+
 ## Several things glowing at once
 
 A row of cards can all be highlighted at the same time. `If several match,
