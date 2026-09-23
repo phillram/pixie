@@ -75,6 +75,14 @@ picture it captured along with its size in pixels, and tells you plainly if the
 file has gone missing. A color field shows a filled swatch and the hex value
 next to the RGB numbers.
 
+Name a step and the list reads by that name, with the generated summary
+following in brackets so you can still see which image or key it uses:
+
+```
+ 2. Click the OK button   (Click ok.png)
+ 3. Confirm with Enter    (Press Enter)
+```
+
 Step names are labels. They appear in the list and in the log and nothing else
 reads them, so rename anything at any time without affecting what it does. A
 captured image keeps working after a rename: the step name only seeds the

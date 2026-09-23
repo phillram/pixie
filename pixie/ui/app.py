@@ -556,15 +556,31 @@ class App:
 
     @staticmethod
     def _row_label(index: int, step: dict[str, Any]) -> tuple[str, str | None]:
-        """How one step reads in the list, and what color it should be."""
+        """How one step reads in the list, and what color it should be.
+
+        If you have given a step your own name, that is what you want to read
+        first. The generated summary still follows in brackets, because it is
+        what tells you which image or key the step is actually using.
+        """
         enabled = step.get("enabled", True)
-        kind = step.get("type")
+        kind = step.get("type", "")
         if kind == "section":
             return "  " + step_defs.describe(step), theme.ACCENT
         if kind == "note":
             return "     " + step_defs.describe(step), theme.MUTED
+
+        summary = step_defs.describe(step)
+        name = str(step.get("name") or "").strip()
+        step_type = step_defs.STEP_TYPES.get(kind)
+        # Every step starts out named after its type. Only show the name when
+        # it says something the type label does not.
+        if name and step_type is not None and name != step_type.label:
+            text = f"{name}   ({summary})" if summary else name
+        else:
+            text = summary
+
         prefix = f"{index + 1:>2}. " if enabled else f"{index + 1:>2}. - "
-        return prefix + step_defs.describe(step), None if enabled else theme.DISABLED
+        return prefix + text, None if enabled else theme.DISABLED
 
     def _refresh_row(self, index: int) -> None:
         """Redraw a single row, leaving every other widget untouched.

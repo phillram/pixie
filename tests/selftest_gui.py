@@ -172,6 +172,50 @@ def check_typing_does_not_steal_focus():
     return problems
 
 
+def check_names_show_in_the_list():
+    """A step you have named must read by that name in the sequence list.
+
+    Ordinary steps used to show only their generated summary, so renaming one
+    appeared to do nothing at all.
+    """
+    problems = []
+    named = step_defs.new_step("click_image")
+    named["name"] = "Click the OK button"
+    named["image"] = "images/ok.png"
+    untouched = step_defs.new_step("click_image")
+    untouched["image"] = "images/cancel.png"
+    divider = step_defs.new_step("section")
+    divider["name"] = "Screen One"
+
+    app.sequence = engine_mod.Sequence(name="names",
+                                       steps=[divider, named, untouched])
+    app.refresh_list(keep=0)
+    root.update()
+
+    rows = [app.listbox.get(i) for i in range(app.listbox.size())]
+    if "Screen One" not in rows[0]:
+        problems.append(f"section name missing from the list: {rows[0]!r}")
+    if "Click the OK button" not in rows[1]:
+        problems.append(f"step name missing from the list: {rows[1]!r}")
+    if "ok.png" not in rows[1]:
+        problems.append(f"step summary lost when a name is set: {rows[1]!r}")
+    # A step left on its default name should not repeat that name pointlessly.
+    if untouched["name"] in rows[2]:
+        problems.append(f"default name shown needlessly: {rows[2]!r}")
+
+    # And renaming must take effect immediately, without a rebuild.
+    app.selected = 1
+    app.build_editor()
+    root.update()
+    app.field_vars["name"].set("Dismiss the dialog")
+    root.update()
+    if "Dismiss the dialog" not in app.listbox.get(1):
+        problems.append(f"rename did not reach the list: {app.listbox.get(1)!r}")
+
+    print("Names ok: custom names show in the list and update as you type")
+    return problems
+
+
 def check_image_and_color_previews():
     """An image step shows the picture; a color step shows the color."""
     import cv2
@@ -330,6 +374,11 @@ try:
     failures.extend(check_typing_does_not_steal_focus())
 except Exception as error:  # noqa: BLE001
     failures.append(f"typing check: {error!r}")
+
+try:
+    failures.extend(check_names_show_in_the_list())
+except Exception as error:  # noqa: BLE001
+    failures.append(f"name display check: {error!r}")
 
 try:
     failures.extend(check_image_and_color_previews())
