@@ -748,6 +748,18 @@ the next thing Pixie needs to look at. Two things make it less mechanical:
   A warped cursor is somewhere, then somewhere else, having crossed nothing
   in between - applications that track hover never see it pass over anything.
 
+All movement is sent the same way clicks are: as input, at the bottom of the
+input stack. `SetCursorPos`, the obvious way to move a cursor, moves it and
+generates no input at all, so an application reading raw input - which is what
+game engines normally do - never learns the pointer moved. It draws the cursor
+somewhere new while the application still believes it is where it was. That is
+how a hovered card stays enlarged after the pointer has visibly left it.
+
+Parking also nudges a pixel and back on arrival. Landing somewhere is a single
+event, and an application that only re-checks what is under the pointer when
+the pointer moves can otherwise be left holding a hover it should have
+dropped. A hand never lands dead still either.
+
 A sequence saved before this had a single point, which becomes a box one pixel
 across: it carries on landing exactly where it always did until you widen it.
 

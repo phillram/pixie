@@ -125,6 +125,7 @@ def main() -> int:
     failures.extend(_check_declared_defaults())
     failures.extend(_check_click_box())
     failures.extend(_check_keyboard())
+    failures.extend(_check_mouse_movement_is_injected())
     failures.extend(_check_mouse())
 
     try:
@@ -1667,6 +1668,65 @@ def _check_keyboard() -> list[str]:
         problems.append(f"expected two 'q' presses, got {received}")
     if "return" not in got and "kp_enter" not in got:
         problems.append(f"expected Enter, got {received}")
+    return problems
+
+
+def _check_mouse_movement_is_injected() -> list[str]:
+    """Movement must be sent as input, and still land on the exact pixel.
+
+    SetCursorPos moves the cursor and generates no input, so an application
+    reading raw input never learns the pointer moved - it goes on believing
+    the cursor is over whatever it was over, which is how a hovered card
+    stays enlarged after the pointer has visibly left it. SendInput goes in
+    at the bottom of the input stack instead, the same way clicks always did.
+
+    The cost is that absolute coordinates are scaled to a 0-65535 grid across
+    the whole virtual desktop, so the arithmetic has to be right or every
+    click lands slightly off. That is what this checks.
+    """
+    from pixie.system import mouse as ms
+
+    left, top, width, height = screen.virtual_bounds()
+    was = ms.position()
+    problems = []
+    tried = [
+        (left + 1, top + 1),                      # the very corner
+        (left + width - 2, top + height - 2),     # the far corner
+        (left + width // 2, top + height // 2),
+        (left + width // 3, top + height // 4),
+    ]
+    try:
+        missed = []
+        for target in tried:
+            ms.move_to(*target)
+            time.sleep(0.01)
+            landed = ms.position()
+            if landed != target:
+                missed.append((target, landed))
+
+        # ...and a glide has to arrive exactly too, not just nearby.
+        ms.move_to(left + 10, top + 10)
+        ms.glide_to(*tried[2], seconds=0)
+        if ms.position() != tried[2]:
+            missed.append((tried[2], ms.position()))
+
+        # The settle leaves the cursor where it found it.
+        ms.settle()
+        if ms.position() != tried[2]:
+            missed.append(("after settle", ms.position()))
+    finally:
+        ms.move_to(*was)
+
+    if missed:
+        problems.append(f"movement landed off target: {missed}")
+    print(f"Mouse moving   : {len(tried)} points across {width}x{height} "
+          f"hit exactly, glide and settle land true")
+
+    # SendInput is what makes it visible; SetCursorPos alone is the old bug.
+    import inspect
+    source = inspect.getsource(ms.move_to)
+    if "SendInput" not in source and "_send" not in source:
+        problems.append("move_to no longer sends the movement as input")
     return problems
 
 

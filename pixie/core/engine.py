@@ -871,6 +871,9 @@ class Engine:
             mouse.glide_to(*target)
         else:
             mouse.move_to(*target)
+        # Parking exists to get the cursor off whatever it was over. Landing
+        # is not always enough to make an application notice it has left.
+        mouse.settle()
 
     # -- the loop --------------------------------------------------------
 

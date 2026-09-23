@@ -14,6 +14,9 @@ from ctypes import wintypes
 _user32 = ctypes.windll.user32
 
 INPUT_MOUSE = 0
+MOUSEEVENTF_MOVE = 0x0001
+MOUSEEVENTF_ABSOLUTE = 0x8000
+MOUSEEVENTF_VIRTUALDESK = 0x4000  # absolute coordinates span every monitor
 MOUSEEVENTF_LEFTDOWN = 0x0002
 MOUSEEVENTF_LEFTUP = 0x0004
 MOUSEEVENTF_RIGHTDOWN = 0x0008
@@ -43,8 +46,8 @@ class _INPUT(ctypes.Structure):
     _fields_ = [("type", wintypes.DWORD), ("mi", _MOUSEINPUT)]
 
 
-def _send(flags: int) -> None:
-    event = _INPUT(type=INPUT_MOUSE, mi=_MOUSEINPUT(0, 0, 0, flags, 0, None))
+def _send(flags: int, dx: int = 0, dy: int = 0) -> None:
+    event = _INPUT(type=INPUT_MOUSE, mi=_MOUSEINPUT(dx, dy, 0, flags, 0, None))
     _user32.SendInput(1, ctypes.byref(event), ctypes.sizeof(event))
 
 
@@ -54,14 +57,55 @@ def position() -> tuple[int, int]:
     return point.x, point.y
 
 
+def _virtual_desktop() -> tuple[int, int, int, int]:
+    """left, top, width, height of every monitor combined."""
+    return (_user32.GetSystemMetrics(76), _user32.GetSystemMetrics(77),
+            _user32.GetSystemMetrics(78), _user32.GetSystemMetrics(79))
+
+
 def move_to(x: int, y: int) -> None:
-    _user32.SetCursorPos(int(x), int(y))
+    """Put the cursor at (x, y) as an input event, not by teleporting it.
+
+    SetCursorPos moves the cursor and nothing else: no input is generated, so
+    an application reading raw input (WM_INPUT, which is what game engines
+    normally use) never learns the pointer moved. The cursor is drawn
+    somewhere new while the application still believes it is where it was --
+    which is how a card stays enlarged after the pointer has visibly left it.
+
+    SendInput goes in at the bottom of the input stack instead, so a raw-input
+    reader sees the movement exactly as it sees a real hand. Clicks were
+    already sent this way; movement was not, and that asymmetry is the bug.
+    """
+    x, y = int(x), int(y)
+    left, top, width, height = _virtual_desktop()
+    # Absolute coordinates are 0-65535 across the virtual desktop, whatever
+    # its real size, and the far edge is 65535 rather than 65536.
+    _send(MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK,
+          ((x - left) * 65535) // max(1, width - 1),
+          ((y - top) * 65535) // max(1, height - 1))
+    # That scaling rounds, so it can land a pixel out. The movement has
+    # already been reported by then; this only corrects where the click goes.
+    if position() != (x, y):
+        _user32.SetCursorPos(x, y)
 
 
 # How a glide is drawn: a step every few pixels, and a cap so crossing a wide
 # desktop does not take all day.
 GLIDE_STEP = 24
 GLIDE_MAX_STEPS = 60
+
+
+def settle() -> None:
+    """A pixel of movement in place, and back.
+
+    Arriving somewhere is one event, and an application that only re-checks
+    what is under the pointer when the pointer moves can be left holding a
+    hover state for something the cursor has already left. A hand never lands
+    dead still; this is the smallest honest version of that.
+    """
+    x, y = position()
+    move_to(x + 1, y)
+    move_to(x, y)
 
 
 def glide_to(x: int, y: int, seconds: float = 0.25) -> None:
