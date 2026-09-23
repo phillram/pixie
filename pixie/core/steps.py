@@ -12,6 +12,8 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable
 
+from pixie.system import screen
+
 # What to do when a step's timeout expires without the thing appearing.
 #
 # One table, three views. The key is what the file stores and the engine
@@ -77,6 +79,17 @@ COLOR_MATCH = ("hue", "rgb")
 COLOR_MATCH_LABELS = {"hue": "Hue - the shade, at any brightness",
                       "rgb": "RGB - the exact color"}
 
+# Which patch to use when several match at once. The list itself comes from
+# the matcher, so the dropdown cannot offer an order it does not implement.
+PICK_ORDERS = screen.PICK_ORDERS
+PICK_LABELS = {
+    "largest": "the biggest one",
+    "leftmost": "the one furthest left",
+    "rightmost": "the one furthest right",
+    "topmost": "the one nearest the top",
+    "bottommost": "the one nearest the bottom",
+}
+
 # Plain English for the values stored in each 'choice' field, looked up by the
 # field's key. The file still stores the short value; only the dropdown reads
 # differently.
@@ -85,6 +98,7 @@ CHOICE_LABELS: dict[str, dict[str, str]] = {
     "button": BUTTON_LABELS,
     "mode": COLOR_MODE_LABELS,
     "match": COLOR_MATCH_LABELS,
+    "pick": PICK_LABELS,
 }
 # What the chosen value actually means, shown under the dropdown.
 CHOICE_NOTES: dict[str, dict[str, str]] = {
@@ -118,6 +132,14 @@ _TIMEOUT_HINT = (
     "that takes. Use it when the next steps make no sense without it.\n"
     "A section's start point is usually the one to shorten - 30s of waiting "
     "before moving on to the next section is 30s of nothing happening."
+)
+_PICK_HINT = (
+    "Several patches of the color can be on screen at once - a row of cards "
+    "all glowing, for instance. This decides which one Pixie goes for.\n"
+    "'the biggest one' is what she has always done, and is right when the "
+    "real target is the strongest glow. Pick a direction instead to work "
+    "through them in order: 'furthest left' takes the leftmost every time, so "
+    "repeating the section deals with them left to right."
 )
 _SECTION_PAUSE_HINT = (
     "Replaces the sequence-wide pause between sections, for this section "
@@ -303,6 +325,8 @@ STEP_TYPES: dict[str, StepType] = {
             Field("min_pixels", "integer", "Smallest patch (pixels)", 40, minimum=1, maximum=100000,
                   hint="Ignore patches smaller than this many pixels, so stray "
                        "matching pixels elsewhere don't count."),
+            Field("pick", "choice", "If several match, use", "largest",
+                  choices=PICK_ORDERS, hint=_PICK_HINT),
             Field("timeout", "number", "Give up after (s)", 30.0, hint=_TIMEOUT_HINT),
             Field("on_timeout", "choice", "If it never appears, then", "restart",
                   choices=ON_TIMEOUT),
@@ -330,6 +354,8 @@ STEP_TYPES: dict[str, StepType] = {
             Field("min_pixels", "integer", "Smallest patch (pixels)", 40,
                   minimum=1, maximum=100000,
                   hint="Ignore patches smaller than this, so a few stray matching pixels elsewhere don't count as a find."),
+            Field("pick", "choice", "If several match, use", "largest",
+                  choices=PICK_ORDERS, hint=_PICK_HINT),
             Field("timeout", "number", "Give it this long (s)", 2.0,
                   hint="How long to give it before deciding it isn't there."),
         ) + _CLICK_FIELDS,

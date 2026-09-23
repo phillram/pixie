@@ -204,6 +204,9 @@ class Engine:
         # Set from the divider of whichever section is running: a ceiling on
         # how long any step inside it may wait. None means each step decides.
         self.wait_limit: float | None = None
+        # How many patches the last color search turned up, so the log
+        # can say which of them was chosen.
+        self.last_candidates = 0
 
     # -- plumbing --------------------------------------------------------
 
@@ -365,7 +368,7 @@ class Engine:
     def _look_for_color(self, step: dict[str, Any],
                         region: tuple[int, int, int, int]) -> screen.ColorHit | None:
         """One search for the step's color, however it's configured to match."""
-        return screen.find_color(
+        hits = screen.find_colors(
             region,
             tuple(step["color"]),
             float(self._value(step, "tolerance", 50)),
@@ -373,7 +376,20 @@ class Engine:
             match=self._value(step, "match", "hue"),
             min_saturation=int(self._value(step, "min_saturation", 90)),
             min_brightness=int(self._value(step, "min_brightness", 70)),
+            order=self._value(step, "pick", "largest"),
         )
+        # Keep the count for the log: "1 of 3" is the difference between
+        # picking the right card and picking one at random.
+        self.last_candidates = len(hits)
+        return hits[0] if hits else None
+
+    def _which_one(self, step: dict[str, Any]) -> str:
+        """', 1 of 4 - the one furthest left' when there was a choice to make."""
+        if self.last_candidates <= 1:
+            return ""
+        order = self._value(step, "pick", "largest")
+        return (f" - {self.last_candidates} patches matched, took "
+                f"{step_defs.PICK_LABELS.get(order, order)}")
 
     @staticmethod
     def _color_description(step: dict[str, Any]) -> str:
@@ -400,7 +416,7 @@ class Engine:
         self.last_match = hit.center
         off_x, off_y = step.get("offset") or (0, 0)
         self.log(f"    found it - {hit.pixels} pixels in a "
-                 f"{hit.width}x{hit.height} box")
+                 f"{hit.width}x{hit.height} box{self._which_one(step)}")
         self._click(hit.x + off_x, hit.y + off_y, step, "the color")
         return "ok"
 
@@ -426,7 +442,8 @@ class Engine:
             return "timeout"
         self.last_match = hit.center
         self.log(f"    found RGB{target} - {hit.pixels} pixels in a "
-                 f"{hit.width}x{hit.height} box, center {hit.x}, {hit.y}")
+                 f"{hit.width}x{hit.height} box, center {hit.x}, {hit.y}"
+                 f"{self._which_one(step)}")
         return "ok"
 
     def _do_wait_for_image(self, step: dict[str, Any]) -> str:

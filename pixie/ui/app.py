@@ -161,6 +161,13 @@ class SettingsDialog:
 
         self.vars: dict[str, tk.Variable] = {}
         row = 0
+        ttk.Label(frame, text="These belong to this sequence, not to Pixie, so "
+                              "different jobs can have different timing. Saving "
+                              "here saves the sequence too.",
+                  style="Muted.TLabel", wraplength=int(440 * scale),
+                  justify="left").grid(row=row, column=0, columnspan=2,
+                                       sticky="w", pady=(0, 14))
+        row += 1
         for key, label, hint in self.RANGES:
             ttk.Label(frame, text=label).grid(row=row, column=0, sticky="w",
                                               padx=(0, 14), pady=(4, 0))
@@ -299,7 +306,11 @@ class SettingsDialog:
         self.settings.abort_key = self.abort_var.get()
         self.settings.toggle_key = self.toggle_var.get()
         self.settings.failsafe_corner = bool(self.corner_var.get())
-        self.settings.park_mouse = PARK_MODES.get(self.park_var.get(), "off")
+        # Keep what was already set if the label somehow does not match one we
+        # know. It used to fall back to "off", which silently undid the
+        # setting and looked exactly like Pixie forgetting it.
+        self.settings.park_mouse = PARK_MODES.get(self.park_var.get(),
+                                                  self.settings.park_mouse)
         self.settings.park_point = self.park_point
         if self.settings.park_mouse == "custom" and not self.park_point:
             messagebox.showwarning(
@@ -354,10 +365,13 @@ class App:
         self.worker: threading.Thread | None = None
         self.events: queue.Queue[dict[str, Any]] = queue.Queue()
         self.field_vars: dict[str, tk.Variable] = {}
+        # The four editable numbers behind each region or box field.
+        self.region_boxes: dict[str, tuple[dict[str, tk.Variable], dict]] = {}
         self.running = False
         self.lit_section: int | None = None   # row painted as the live section
         self.capturing = False                # picker is up: ignore the hotkey
         self._hotkey_was_down = False
+        self._last_normal_geometry: str | None = None
 
         self.dry_run = tk.BooleanVar(value=True)
         self.hide_while_running = tk.BooleanVar(value=True)
@@ -375,6 +389,7 @@ class App:
         root.bind("<Control-o>", lambda _e: self.open())
         root.bind("<Control-d>", lambda _e: self.duplicate())
         root.bind("<F5>", lambda _e: self.toggle_run())
+        root.bind("<Configure>", self._watch_geometry)
 
         state = self._read_state()
         self._restore_preferences(state)
@@ -851,6 +866,7 @@ class App:
         for child in self.editor.winfo_children():
             child.destroy()
         self.field_vars.clear()
+        self.region_boxes.clear()
         # Start each step at its top, rather than wherever you had scrolled
         # the last one to.
         self.canvas.yview_moveto(0)
@@ -1027,30 +1043,87 @@ class App:
         r, g, b = (int(v) for v in rgb)
         return f"RGB({r}, {g}, {b})    #{r:02x}{g:02x}{b:02x}"
 
-    def _field_region(self, step: dict[str, Any], spec: step_defs.Field, row: int) -> None:
-        self._region_field(step, spec, row, whole_screen=True)
+    def _field_region(self, step: dict[str, Any], spec: step_defs.Field, row: int) -> int:
+        return self._region_field(step, spec, row, whole_screen=True)
 
-    def _field_box(self, step: dict[str, Any], spec: step_defs.Field, row: int) -> None:
+    def _field_box(self, step: dict[str, Any], spec: step_defs.Field, row: int) -> int:
         """A box to click inside. Same picker, but 'whole screen' makes no
         sense here -- it would mean clicking anywhere at all."""
-        self._region_field(step, spec, row, whole_screen=False)
+        return self._region_field(step, spec, row, whole_screen=False)
 
     def _region_field(self, step: dict[str, Any], spec: step_defs.Field, row: int,
-                      whole_screen: bool) -> None:
+                      whole_screen: bool) -> int:
+        """A box, as four numbers you can edit plus a button to drag a new one.
+
+        Dragging is how you make a box; typing is how you fix one. Nudging an
+        edge by ten pixels should not mean re-picking the whole thing.
+        """
         empty = "whole screen (slower)" if whole_screen else "nothing picked yet"
         value = step.get(spec.key)
         var = tk.StringVar(value=self._region_label(value, empty))
         self._readonly_entry(row, var)
+
         holder = ttk.Frame(self.editor, style="Panel.TFrame")
         holder.grid(row=row, column=2, sticky="w", padx=(8, 0))
         ttk.Button(holder, text="Pick...", style="Tool.TButton",
-                   command=lambda: self._capture_region(step, spec, var)).pack(side="left")
+                   command=lambda: self._capture_region(step, spec, var,
+                                                        boxes)).pack(side="left")
         if whole_screen:
             ttk.Button(holder, text="Whole screen", style="Tool.TButton",
-                       command=lambda: (self._set_value(step, spec.key, None),
-                                        var.set(self._region_label(None, empty)))).pack(
+                       command=lambda: self._clear_region(step, spec, var, boxes,
+                                                          empty)).pack(
                 side="left", padx=(6, 0))
+
+        edit = ttk.Frame(self.editor, style="Panel.TFrame")
+        edit.grid(row=row + 1, column=1, columnspan=2, sticky="w", pady=(2, 6))
+        current = list(value) if value else [0, 0, 0, 0]
+        boxes: dict[str, tk.StringVar] = {}
+        editing = {"live": False}  # stop our own writes from re-entering
+
+        def store(*_args: object) -> None:
+            if editing["live"]:
+                return
+            try:
+                numbers = [int(float(boxes[name].get()))
+                           for name in ("left", "top", "width", "height")]
+            except (TypeError, ValueError):
+                return  # mid-typing, or just a minus sign so far
+            if numbers[2] <= 0 or numbers[3] <= 0:
+                return  # a box with no width is not a box yet
+            self._set_value(step, spec.key, numbers)
+            var.set(self._region_label(numbers, empty))
+
+        for label, name in (("left", "left"), ("top", "top"),
+                            ("width", "width"), ("height", "height")):
+            ttk.Label(edit, text=f"  {label} ", style="Blurb.TLabel").pack(side="left")
+            boxes[name] = tk.StringVar(
+                value=str(current[("left", "top", "width", "height").index(name)]))
+            ttk.Entry(edit, textvariable=boxes[name], width=6).pack(side="left")
+            boxes[name].trace_add("write", store)
+
+        self.region_boxes[spec.key] = (boxes, editing)
         self.field_vars[spec.key] = var
+        return 1
+
+    def _fill_region_boxes(self, key: str, value: Any) -> None:
+        """Put new numbers in the four boxes without them writing back."""
+        entry = self.region_boxes.get(key)
+        if entry is None:
+            return
+        boxes, editing = entry
+        editing["live"] = True
+        try:
+            for name, number in zip(("left", "top", "width", "height"),
+                                    value or [0, 0, 0, 0]):
+                boxes[name].set(str(number))
+        finally:
+            editing["live"] = False
+
+    def _clear_region(self, step: dict[str, Any], spec: step_defs.Field,
+                      var: tk.StringVar, _boxes: Any, empty: str) -> None:
+        self._set_value(step, spec.key, None)
+        var.set(self._region_label(None, empty))
+        self._fill_region_boxes(spec.key, None)
 
     @staticmethod
     def _region_label(value: Any, empty: str = "whole screen (slower)") -> str:
@@ -1272,6 +1345,11 @@ class App:
             messagebox.showinfo("Running", "Stop the run before capturing.")
             return None
         self.capturing = True  # the start/stop key must not fire mid-capture
+        # Hiding and showing a window loses whether it was maximized, and puts
+        # it back at whatever size it was before that. Remember both and put
+        # them back, or capturing anything shrinks the window.
+        was_maximized = self.root.state() == "zoomed"
+        was_at = self._last_normal_geometry or self._current_geometry()
         self.root.withdraw()
         self.root.update()
         time.sleep(0.35)  # let the desktop repaint before we photograph it
@@ -1282,7 +1360,17 @@ class App:
         finally:
             self.capturing = False
             self.root.deiconify()
+            self._restore_window(was_at, was_maximized)
             self.root.lift()
+
+    def _restore_window(self, geometry: str | None, maximized: bool) -> None:
+        try:
+            if geometry:
+                self.root.geometry(geometry)
+            if maximized:
+                self.root.state("zoomed")
+        except tk.TclError:
+            pass  # a window we cannot place is still a usable window
 
     def _unique_image_path(self, hint: str) -> Path:
         IMAGES_DIR.mkdir(exist_ok=True)
@@ -1342,13 +1430,14 @@ class App:
             self.log(f"Also set this step's watch position to {x}, {y}", "muted")
 
     def _capture_region(self, step: dict[str, Any], spec: step_defs.Field,
-                        var: tk.StringVar) -> None:
+                        var: tk.StringVar, _boxes: Any = None) -> None:
         picker = self._pick("area")
         if picker is None or picker.result is None:
             return
         left, top, width, height = picker.to_absolute(picker.result)
         self._set_value(step, spec.key, [left, top, width, height])
         var.set(self._region_label([left, top, width, height]))
+        self._fill_region_boxes(spec.key, [left, top, width, height])
         if spec.kind == "box":
             self.log(f"Click box {width}x{height} at {left}, {top} - "
                      f"{width * height:,} pixels to choose from.", "good")
@@ -1391,6 +1480,14 @@ class App:
         if SettingsDialog(self.root, self.sequence.settings, self.scale).run():
             self.mark_dirty()
             self._refresh_run_tip()
+            # These live in the sequence file, so they are only remembered if
+            # that file is written. Leaving it to the user to notice meant
+            # settings appeared to reset themselves on the next open.
+            if self.sequence.path is not None:
+                self.save()
+            else:
+                self.log("Settings are saved with the sequence - save it to "
+                         "keep them.", "warn")
             s = self.sequence.settings
             self.log(f"Settings: {_range_text(s.step_pause_min, s.step_pause_max)} "
                      f"after each step, "
@@ -1484,8 +1581,15 @@ class App:
         self._write_state(
             dry_run=bool(self.dry_run.get()),
             minimize_while_running=bool(self.hide_while_running.get()),
-            geometry=self._current_geometry(),
+            geometry=self._last_normal_geometry or self._current_geometry(),
+            maximized=self._is_maximized(),
         )
+
+    def _is_maximized(self) -> bool:
+        try:
+            return self.root.state() == "zoomed"
+        except tk.TclError:
+            return False
 
     def _current_geometry(self) -> str | None:
         """Size and position, unless minimized or maximized right now."""
@@ -1496,6 +1600,20 @@ class App:
         except tk.TclError:
             return None
 
+    def _watch_geometry(self, event: tk.Event) -> None:
+        """Keep the last un-maximized size and position as the window moves.
+
+        Reading it only when closing is too late: a window closed while
+        maximized has no ordinary size to report, and one closed after being
+        maximized and restored reports whatever Tk last felt like. Catching it
+        as it changes means there is always a sensible size to come back to.
+        """
+        if event.widget is not self.root:
+            return  # every child widget reports its own Configure events
+        current = self._current_geometry()
+        if current:
+            self._last_normal_geometry = current
+
     def _restore_preferences(self, state: dict[str, Any]) -> None:
         if isinstance(state.get("dry_run"), bool):
             self.dry_run.set(state["dry_run"])
@@ -1504,10 +1622,11 @@ class App:
 
         geometry = state.get("geometry")
         if isinstance(geometry, str) and self._geometry_is_on_screen(geometry):
-            try:
-                self.root.geometry(geometry)
-            except tk.TclError:
-                pass
+            self._last_normal_geometry = geometry
+            self._restore_window(geometry, bool(state.get("maximized")))
+        elif state.get("maximized"):
+            # The saved size was unusable, but "it was maximized" still holds.
+            self._restore_window(None, True)
 
     def _geometry_is_on_screen(self, geometry: str) -> bool:
         """Reject a saved position that would open the window where it can't be seen.

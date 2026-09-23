@@ -113,10 +113,20 @@ Tk, which Pixie's window is built on, leaves these out and binds Ctrl+A to
 "go to the start of the line" instead. Shift+Delete is left alone, because it
 has meant Cut for longer than any of this.
 
-Pixie remembers the Dry run and Minimize settings, the window size and position,
-and which sequence you had open, so she comes back the way you left her. A saved
-position on a monitor that no longer exists is ignored rather than opening the
-window somewhere you cannot see it.
+Every box and search area is four editable numbers as well as a button. Drag
+one to create it, then type to stretch or nudge it. You should not have to
+re-drag a whole box to move an edge ten pixels.
+
+Pixie remembers the Dry run and Minimize settings, the window size and
+position, whether it was maximized, and which sequence you had open, so she
+comes back the way you left her. The size behind a maximized window is kept
+too, so unmaximizing gives you back the window you had. A saved position on a
+monitor that no longer exists is ignored rather than opening the window
+somewhere you cannot see it.
+
+Pauses, keys and the cursor-parking setting belong to the **sequence**, not to
+Pixie, so different jobs can have different timing. Changing them saves the
+sequence file straight away, which is why they are still there next time.
 
 Sequences are saved as JSON in `sequences/`. Captured reference images go in
 `images/`. Neither is committed.
@@ -224,6 +234,31 @@ prints the tolerance, minimum saturation and minimum brightness to type in,
 along with what proportion of your selection those settings would match.
 
 Use `rgb` mode instead for flat, solid colors that do not change.
+
+## Several things glowing at once
+
+A row of cards can all be highlighted at the same time. `If several match,
+use` decides which one Pixie goes for:
+
+| Setting | Which patch |
+| --- | --- |
+| the biggest one | The largest patch of the color. The default, and what Pixie has always done |
+| the one furthest left | Lowest x. Right for working along a row in reading order |
+| the one furthest right | Highest x |
+| the one nearest the top | Lowest y |
+| the one nearest the bottom | Highest y |
+
+The biggest patch is whichever glow happens to be brightest or fattest at that
+instant, which is why it can look like it picks at random. Set it to
+`the one furthest left` and it takes the leftmost every time, so a section that
+repeats works along the row from the left.
+
+The log says when there was a choice to make:
+
+```
+found RGB(37, 254, 254) - 8680 pixels in a 180x250 box, center 640, 900
+    - 3 patches matched, took the one furthest left
+```
 
 ## Speed
 

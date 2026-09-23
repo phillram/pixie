@@ -689,6 +689,160 @@ def check_deleting_a_step_offers_to_delete_its_image():
     return problems
 
 
+def check_boxes_can_be_typed_into():
+    """A box can be stretched by editing its numbers, not only by re-dragging."""
+    problems = []
+    step = dict(step_defs.new_step("click_box"), box=[100, 200, 300, 400])
+    region_step = dict(step_defs.new_step("click_image"),
+                       image="images/x.png", region=[10, 20, 30, 40])
+    app.sequence = engine_mod.Sequence(name="boxes", steps=[step, region_step])
+    app.refresh_list(keep=0)
+    app.selected = 0
+    app.build_editor()
+    root.update()
+
+    if "box" not in app.region_boxes:
+        problems.append("a click box has no editable numbers")
+        return problems
+
+    boxes = app.region_boxes["box"][0]
+    for name, value in (("width", "640"), ("left", "55")):
+        boxes[name].set(value)
+        root.update()
+    if step["box"] != [55, 200, 640, 400]:
+        problems.append(f"typing into the numbers gave {step['box']}")
+
+    # Half-typed input must not wreck the stored box.
+    boxes["left"].set("")
+    root.update()
+    if step["box"] != [55, 200, 640, 400]:
+        problems.append(f"clearing a box mid-edit changed it to {step['box']}")
+    boxes["width"].set("0")
+    root.update()
+    if step["box"][2] == 0:
+        problems.append("a zero width was accepted as a box")
+    boxes["left"].set("55")
+    root.update()
+
+    # The readable summary keeps up with the numbers.
+    if "640x400 at 55, 200" not in app.field_vars["box"].get():
+        problems.append(f"the summary did not follow: {app.field_vars['box'].get()!r}")
+
+    # Search areas on an image step get the same treatment.
+    app.selected = 1
+    app.build_editor()
+    root.update()
+    if "region" not in app.region_boxes:
+        problems.append("a search area has no editable numbers")
+    else:
+        app.region_boxes["region"][0]["height"].set("900")
+        root.update()
+        if region_step["region"] != [10, 20, 30, 900]:
+            problems.append(f"search area edit gave {region_step['region']}")
+
+    print("Boxes ok: left, top, width and height are typeable")
+    return problems
+
+
+def check_window_size_is_remembered():
+    """Maximized, and the size behind it, survive a restart and a capture."""
+    import json
+    import tempfile
+
+    problems = []
+    original_state_path = gui.STATE_PATH
+    gui.STATE_PATH = Path(tempfile.mkdtemp()) / "state.json"
+    try:
+        first_root = tk.Tk()
+        first = gui.App(first_root)
+        first_root.deiconify()
+        min_width, min_height = first_root.minsize()
+        want = f"{min_width + 140}x{min_height + 100}+120+80"
+        first_root.geometry(want)
+        first_root.update()
+        first_root.state("zoomed")          # maximize it, as the user had
+        first_root.update()
+
+        # Capturing hides and re-shows the window; it must come back maximized.
+        was = first_root.state()
+        first._restore_window(first._last_normal_geometry, was == "zoomed")
+        first_root.withdraw()
+        first_root.update()
+        first_root.deiconify()
+        first._restore_window(first._last_normal_geometry, True)
+        first_root.update()
+        if first_root.state() != "zoomed":
+            problems.append("the window did not come back maximized after a "
+                            "capture")
+
+        first.save_preferences()
+        first.on_close()
+
+        written = json.loads(gui.STATE_PATH.read_text(encoding="utf-8"))
+        if not written.get("maximized"):
+            problems.append("maximized was not remembered")
+        saved = str(written.get("geometry") or "")
+        if saved.split("+")[0] != want.split("+")[0]:
+            problems.append(f"the size behind the maximized window was saved as "
+                            f"{written.get('geometry')!r}, expected {want!r}")
+
+        second_root = tk.Tk()
+        second = gui.App(second_root)
+        second_root.update()
+        if second_root.state() != "zoomed":
+            problems.append(f"reopened as {second_root.state()!r}, not maximized")
+        second.on_close()
+        print(f"Window ok: reopened maximized, restores to "
+              f"{written.get('geometry')}")
+    finally:
+        gui.STATE_PATH = original_state_path
+    return problems
+
+
+def check_settings_stick():
+    """Changing a setting writes it to the sequence, so it survives a reload."""
+    import tempfile
+
+    problems = []
+    original_dialog = gui.SettingsDialog
+    target = Path(tempfile.mkdtemp()) / "settings.json"
+
+    class FakeDialog:
+        """Stands in for the modal: sets what the user would have set."""
+
+        def __init__(self, parent, settings, scale=1.0):
+            self.settings = settings
+
+        def run(self):
+            self.settings.park_mouse = "custom"
+            self.settings.park_point = [1234, 567]
+            return True
+
+    gui.SettingsDialog = FakeDialog
+    try:
+        app.sequence = engine_mod.Sequence(name="sticky",
+                                           steps=[step_defs.new_step("press_key")])
+        app.sequence.save(target)
+        app.refresh_list(keep=0)
+        app.edit_settings()
+        root.update()
+
+        reloaded = engine_mod.Sequence.load(target)
+        if reloaded.settings.park_mouse != "custom":
+            problems.append("the park setting was not written to the sequence, "
+                            "so it would be lost on the next open")
+        if reloaded.settings.park_point != [1234, 567]:
+            problems.append(f"the parked spot came back as "
+                            f"{reloaded.settings.park_point}")
+        if app.dirty:
+            problems.append("the sequence was left unsaved after saving settings")
+        print("Settings ok: written to the sequence as soon as they change")
+    finally:
+        gui.SettingsDialog = original_dialog
+        target.unlink(missing_ok=True)
+    return problems
+
+
 def check_image_and_color_previews():
     """An image step shows the picture; a color step shows the color."""
     import cv2
@@ -887,6 +1041,13 @@ try:
     failures.extend(check_deleting_a_step_offers_to_delete_its_image())
 except Exception as error:  # noqa: BLE001
     failures.append(f"image cleanup check: {error!r}")
+
+for check in (check_boxes_can_be_typed_into, check_window_size_is_remembered,
+              check_settings_stick):
+    try:
+        failures.extend(check())
+    except Exception as error:  # noqa: BLE001
+        failures.append(f"{check.__name__}: {error!r}")
 
 try:
     failures.extend(check_image_and_color_previews())

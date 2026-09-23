@@ -210,7 +210,23 @@ def _hue_mask(patch: np.ndarray, target_rgb: tuple[int, int, int],
             & (value >= min_brightness))
 
 
-def find_color(
+# When several separate patches of the color are on screen at once, which
+# one to report. The engine and the GUI both take their list from here.
+PICK_ORDERS = ("largest", "leftmost", "rightmost", "topmost", "bottommost")
+
+
+def _sort_key(order: str):
+    """How to rank candidate blobs, given as (left, top, width, height, area)."""
+    return {
+        "largest": lambda b: (-b[4], b[0], b[1]),
+        "leftmost": lambda b: (b[0], b[1]),
+        "rightmost": lambda b: (-(b[0] + b[2]), b[1]),
+        "topmost": lambda b: (b[1], b[0]),
+        "bottommost": lambda b: (-(b[1] + b[3]), b[0]),
+    }.get(order, lambda b: (-b[4], b[0], b[1]))
+
+
+def find_colors(
     region: Region,
     target_rgb: tuple[int, int, int],
     tolerance: float = 40.0,
@@ -218,8 +234,9 @@ def find_color(
     match: str = "rgb",
     min_saturation: int = 90,
     min_brightness: int = 70,
-) -> ColorHit | None:
-    """Find the largest patch of `target_rgb` inside `region`.
+    order: str = "largest",
+) -> list[ColorHit]:
+    """Every patch of `target_rgb` inside `region`, in the order asked for.
 
     Built for things like a glowing highlight around an item: the glow keeps
     its color even when whatever it surrounds changes, so we look for the
@@ -229,8 +246,12 @@ def find_color(
     hue give or take `tolerance` degrees, at any brightness). Use "hue" for
     anything that glows or pulses.
 
-    Returns None if no blob has at least `min_pixels` matching pixels, which
-    keeps stray anti-aliased pixels from counting as a hit.
+    `order` decides which patch comes first when several match at once:
+    "largest" (the default, and what Pixie has always done), or by position --
+    "leftmost" works through a row of cards in the order you would read them.
+
+    Patches with fewer than `min_pixels` pixels are dropped, which keeps stray
+    anti-aliased pixels from counting as a hit.
     """
     patch = grab(region)
     if match == "hue":
@@ -241,24 +262,43 @@ def find_color(
 
     mask = within.astype(np.uint8)
     if not mask.any():
-        return None
+        return []
 
-    # Largest connected blob, so two separate glows don't average into a
-    # meaningless point between them.
+    # Connected blobs, so two separate glows don't average into a meaningless
+    # point between them.
     count, _, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
-    if count < 2:
-        return None
-    largest = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
-    area = int(stats[largest, cv2.CC_STAT_AREA])
-    if area < min_pixels:
-        return None
+    blobs = [
+        (int(stats[n, cv2.CC_STAT_LEFT]), int(stats[n, cv2.CC_STAT_TOP]),
+         int(stats[n, cv2.CC_STAT_WIDTH]), int(stats[n, cv2.CC_STAT_HEIGHT]),
+         int(stats[n, cv2.CC_STAT_AREA]))
+        for n in range(1, count)
+        if int(stats[n, cv2.CC_STAT_AREA]) >= min_pixels
+    ]
+    blobs.sort(key=_sort_key(order))
 
-    left = region[0] + int(stats[largest, cv2.CC_STAT_LEFT])
-    top = region[1] + int(stats[largest, cv2.CC_STAT_TOP])
-    width = int(stats[largest, cv2.CC_STAT_WIDTH])
-    height = int(stats[largest, cv2.CC_STAT_HEIGHT])
-    return ColorHit(left + width // 2, top + height // 2,
-                     left, top, width, height, area)
+    hits = []
+    for blob_left, blob_top, width, height, area in blobs:
+        left = region[0] + blob_left
+        top = region[1] + blob_top
+        hits.append(ColorHit(left + width // 2, top + height // 2,
+                             left, top, width, height, area))
+    return hits
+
+
+def find_color(
+    region: Region,
+    target_rgb: tuple[int, int, int],
+    tolerance: float = 40.0,
+    min_pixels: int = 30,
+    match: str = "rgb",
+    min_saturation: int = 90,
+    min_brightness: int = 70,
+    order: str = "largest",
+) -> ColorHit | None:
+    """The one patch of `target_rgb` that `order` puts first. See find_colors."""
+    hits = find_colors(region, target_rgb, tolerance, min_pixels, match,
+                       min_saturation, min_brightness, order)
+    return hits[0] if hits else None
 
 
 _VK_CODES = {

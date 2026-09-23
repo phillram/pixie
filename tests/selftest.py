@@ -94,6 +94,7 @@ def main() -> int:
     failures.extend(_check_restart_section())
     failures.extend(_check_max_cycles_is_a_real_limit())
     failures.extend(_check_section_limits())
+    failures.extend(_check_pick_order())
     failures.extend(_check_declared_defaults())
     failures.extend(_check_click_box())
     failures.extend(_check_keyboard())
@@ -422,6 +423,56 @@ def _check_section_limits() -> list[str]:
     # nothing caps it.
     if runner._timeout({"type": "wait_for_image", "timeout": 0.0}) != 0.0:
         problems.append("'wait forever' stopped meaning forever")
+    return problems
+
+
+def _check_pick_order() -> list[str]:
+    """A row of glowing cards must be workable left to right, not at random."""
+    from pixie.system import screen as screen_mod
+
+    # Three patches of the same cyan, different sizes, left to right. The
+    # middle one is the biggest, so "largest" and "leftmost" disagree and the
+    # test can tell them apart.
+    frame = np.zeros((300, 900, 3), dtype=np.uint8)
+    cyan = (254, 254, 37)  # BGR
+    boxes = {"left": (60, 100, 40, 40), "middle": (400, 100, 90, 90),
+             "right": (760, 100, 50, 50)}
+    for x, y, w, h in boxes.values():
+        frame[y:y + h, x:x + w] = cyan
+
+    original = screen_mod.grab
+    screen_mod.grab = lambda _region=None: frame
+    try:
+        common = dict(region=(0, 0, 900, 300), target_rgb=(37, 254, 254),
+                      tolerance=14, min_pixels=40, match="hue")
+        found = {order: screen_mod.find_color(order=order, **common)
+                 for order in screen_mod.PICK_ORDERS}
+        every = screen_mod.find_colors(order="leftmost", **common)
+    finally:
+        screen_mod.grab = original
+
+    problems = []
+    print("Pick order      : "
+          + ", ".join(f"{name}->x{hit.x}" for name, hit in found.items()))
+    if len(every) != 3:
+        problems.append(f"found {len(every)} patches, expected 3")
+    if [hit.left for hit in every] != sorted(hit.left for hit in every):
+        problems.append("'leftmost' did not return the patches in order")
+
+    expected = {"largest": 400 + 45, "leftmost": 60 + 20,
+                "rightmost": 760 + 25, "topmost": 60 + 20,
+                "bottommost": 400 + 45}
+    for order, want in expected.items():
+        got = found[order]
+        if got is None:
+            problems.append(f"{order!r} found nothing")
+        elif got.x != want:
+            problems.append(f"{order!r} chose x={got.x}, expected {want}")
+
+    # The whole point: picking leftmost must not be the same as largest here.
+    if found["leftmost"].x == found["largest"].x:
+        problems.append("'leftmost' and 'largest' chose the same patch, so the "
+                        "test proves nothing")
     return problems
 
 
