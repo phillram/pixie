@@ -410,7 +410,8 @@ class Engine:
         )
         if hit is None:
             self.last_match = None
-            self.log(f"    no {self._color_description(step)}, skipping")
+            self.log(f"    no {self._color_description(step)} "
+                     f"{self._gave_up(self._timeout(step))}, skipping")
             return "ok"
 
         self.last_match = hit.center
@@ -479,7 +480,8 @@ class Engine:
         match = self._find(step, self._timeout(step))
         if match is None:
             self.last_match = None
-            self.log(f"    {Path(step['image']).name} not there, skipping")
+            self.log(f"    {Path(step['image']).name} not there "
+                     f"{self._gave_up(self._timeout(step))}, skipping")
             return "ok"
         self.last_match = match.center
         off_x, off_y = step.get("offset") or (0, 0)

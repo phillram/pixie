@@ -372,6 +372,8 @@ class App:
         self.capturing = False                # picker is up: ignore the hotkey
         self._hotkey_was_down = False
         self._last_normal_geometry: str | None = None
+        # Where each divider should sit, updated when you drag one.
+        self.sash_wanted: dict[str, int | None] = {}
 
         self.dry_run = tk.BooleanVar(value=True)
         self.hide_while_running = tk.BooleanVar(value=True)
@@ -393,6 +395,7 @@ class App:
 
         state = self._read_state()
         self._restore_preferences(state)
+        self._restore_sashes(state)
         self._restore_last_sequence(state)
         self.refresh_list()
         self._drain_job: str | None = self.root.after(80, self._drain_events)
@@ -482,18 +485,29 @@ class App:
             self.run_tip.update(self._run_tip_text())
 
     def _build_body(self) -> None:
-        body = ttk.Frame(self.root, padding=(12, 10, 12, 0))
-        body.pack(fill="both", expand=True)
-        body.columnconfigure(0, weight=0, minsize=int(340 * self.scale))
-        body.columnconfigure(1, weight=1)
-        body.rowconfigure(0, weight=1)
+        """Sequence, editor and log, with draggable dividers between them.
 
-        self._build_sequence_pane(body)
-        self._build_editor_pane(body)
+        Everything used to be a fixed split: a 340px list, whatever was left
+        for the editor, and nine lines of log. Which pane you need bigger
+        depends entirely on what you are doing, so the dividers move.
+        """
+        self.split_down = ttk.PanedWindow(self.root, orient="vertical")
+        self.split_down.pack(fill="both", expand=True, padx=12, pady=(10, 12))
+
+        self.split_across = ttk.PanedWindow(self.split_down, orient="horizontal")
+        self.split_down.add(self.split_across, weight=4)
+
+        sequence_side = ttk.Frame(self.split_across, padding=(0, 0, 8, 0))
+        editor_side = ttk.Frame(self.split_across, padding=(8, 0, 0, 0))
+        self.split_across.add(sequence_side, weight=2)
+        self.split_across.add(editor_side, weight=5)
+
+        self._build_sequence_pane(sequence_side)
+        self._build_editor_pane(editor_side)
 
     def _build_sequence_pane(self, parent: ttk.Frame) -> None:
         pane = ttk.Frame(parent)
-        pane.grid(row=0, column=0, sticky="nsew", padx=(0, 12))
+        pane.pack(fill="both", expand=True)
         pane.rowconfigure(1, weight=1)
         pane.columnconfigure(0, weight=1)
 
@@ -542,7 +556,7 @@ class App:
 
     def _build_editor_pane(self, parent: ttk.Frame) -> None:
         pane = ttk.Frame(parent)
-        pane.grid(row=0, column=1, sticky="nsew")
+        pane.pack(fill="both", expand=True)
         pane.rowconfigure(1, weight=1)
         pane.columnconfigure(0, weight=1)
 
@@ -598,9 +612,10 @@ class App:
             scrollregion=(0, 0, region[2], max(region[3], self.canvas.winfo_height())))
 
     def _build_log(self) -> None:
-        pane = ttk.Frame(self.root, padding=(12, 10, 12, 12))
-        pane.pack(fill="both")
+        pane = ttk.Frame(self.split_down, padding=(0, 8, 0, 0))
+        self.split_down.add(pane, weight=1)
         pane.columnconfigure(0, weight=1)
+        pane.rowconfigure(1, weight=1)
 
         head = ttk.Frame(pane)
         head.grid(row=0, column=0, sticky="ew", pady=(0, 6))
@@ -612,7 +627,8 @@ class App:
         holder = tk.Frame(pane, bg=theme.PANEL)
         holder.grid(row=1, column=0, sticky="nsew")
         holder.columnconfigure(0, weight=1)
-        self.log_text = theme.text(holder, height=9, state="disabled")
+        holder.rowconfigure(0, weight=1)
+        self.log_text = theme.text(holder, height=8, state="disabled")
         self.log_text.grid(row=0, column=0, sticky="nsew")
         log_scroll = ttk.Scrollbar(holder, orient="vertical", command=self.log_text.yview)
         log_scroll.grid(row=0, column=1, sticky="ns")
@@ -1353,15 +1369,23 @@ class App:
         self.root.withdraw()
         self.root.update()
         time.sleep(0.35)  # let the desktop repaint before we photograph it
+        picker = None
         try:
             picker = capture.Picker(mode, parent=self.root)
             picker.run()
-            return picker
+        except Exception as error:  # noqa: BLE001 - tell the user, don't vanish
+            self.log(f"The screen picker could not open: {error!r}", "error")
         finally:
             self.capturing = False
             self.root.deiconify()
             self._restore_window(was_at, was_maximized)
             self.root.lift()
+
+        # "Nothing happened" is the hardest thing to report, so say it.
+        if picker is not None and picker.result is None:
+            self.log("Nothing picked, so nothing changed. Drag a box, or click "
+                     "a spot - Escape cancels.", "muted")
+        return picker
 
     def _restore_window(self, geometry: str | None, maximized: bool) -> None:
         try:
@@ -1583,7 +1607,73 @@ class App:
             minimize_while_running=bool(self.hide_while_running.get()),
             geometry=self._last_normal_geometry or self._current_geometry(),
             maximized=self._is_maximized(),
+            **self._sash_positions(),
         )
+
+    def _sash_positions(self) -> dict[str, int]:
+        """Where the two dividers sit, so they come back where you put them."""
+        where = {}
+        for name, paned in (("split_across", self.split_across),
+                            ("split_down", self.split_down)):
+            try:
+                where[name] = int(paned.sashpos(0))
+            except (tk.TclError, IndexError):
+                wanted = self.sash_wanted.get(name)
+                if wanted is not None:
+                    where[name] = wanted  # never laid out, but we know the plan
+        return where
+
+    def _restore_sashes(self, state: dict[str, Any]) -> None:
+        """Hold each divider where it was put.
+
+        Setting a sash once at startup does not work: the window has not
+        reached its restored size yet, so the position gets clamped against a
+        window that is still small and ends up somewhere else. Instead each
+        divider is pinned to a remembered position and re-applied as the
+        window settles, until you drag it -- at which point where you dragged
+        it to becomes the remembered position.
+        """
+        for name, paned, share in (("split_across", self.split_across, 0.32),
+                                   ("split_down", self.split_down, 0.72)):
+            wanted = state.get(name)
+            self.sash_wanted[name] = wanted if isinstance(wanted, int) else None
+            self._pin_sash(name, paned, share)
+
+    def _pin_sash(self, name: str, paned: ttk.PanedWindow, share: float) -> None:
+        horizontal = str(paned.cget("orient")) == "horizontal"
+        placed = {"done": False}
+
+        def room() -> int:
+            return paned.winfo_width() if horizontal else paned.winfo_height()
+
+        def apply(_event: tk.Event | None = None) -> None:
+            if placed["done"]:
+                return  # the user owns it from here
+            space = room()
+            if space <= 240:
+                return  # still being laid out; a later Configure will do it
+            wanted = self.sash_wanted.get(name)
+            if wanted is None:
+                wanted = int(space * share)  # first run: a sensible default
+            try:
+                paned.sashpos(0, max(120, min(wanted, space - 120)))
+                placed["done"] = True
+            except tk.TclError:
+                pass
+
+        def dragged(_event: tk.Event) -> None:
+            try:
+                self.sash_wanted[name] = int(paned.sashpos(0))
+                placed["done"] = True
+            except tk.TclError:
+                pass
+
+        paned.bind("<Configure>", apply, add="+")
+        paned.bind("<ButtonRelease-1>", dragged, add="+")
+        # The window has its restored size by now, so the position we put the
+        # divider at is measured against the window it will actually be in.
+        self.root.update_idletasks()
+        apply()
 
     def _is_maximized(self) -> bool:
         try:

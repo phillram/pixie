@@ -95,6 +95,7 @@ def main() -> int:
     failures.extend(_check_max_cycles_is_a_real_limit())
     failures.extend(_check_section_limits())
     failures.extend(_check_pick_order())
+    failures.extend(_check_every_wait_respects_the_cap())
     failures.extend(_check_declared_defaults())
     failures.extend(_check_click_box())
     failures.extend(_check_keyboard())
@@ -476,6 +477,39 @@ def _check_pick_order() -> list[str]:
     return problems
 
 
+def _check_every_wait_respects_the_cap() -> list[str]:
+    """No step type may sit and wait longer than its section's ceiling.
+
+    Written against the step definitions rather than a list kept here, so a
+    new step type that waits is covered the day it is added.
+    """
+    waiting = [key for key, step_type in step_defs.STEP_TYPES.items()
+               if "timeout" in step_type.field_map()]
+    steps = [{"type": "section", "name": "Capped", "enabled": True, "wait_limit": 2}]
+    steps += [dict(step_defs.new_step(key), timeout=45.0) for key in waiting]
+
+    runner = engine_mod.Engine(engine_mod.Sequence(name="caps", steps=steps),
+                              dry_run=True)
+    runner._enter_section(runner.sections()[0])
+
+    problems = []
+    waits = {step["type"]: runner._timeout(step) for step in steps[1:]}
+    print(f"Cap covers      : {len(waiting)} step types that wait -> "
+          f"{sorted(set(waits.values()))}")
+    for kind, waited in waits.items():
+        if waited != 2.0:
+            problems.append(f"{kind} waits {waited}s despite a 2s section cap")
+
+    # And a step asking for less than the cap keeps its own shorter time.
+    brief = dict(step_defs.new_step(waiting[0]), timeout=0.5)
+    if runner._timeout(brief) != 0.5:
+        problems.append("the cap lengthened a step that was already quicker")
+
+    if not waiting:
+        problems.append("no step types declare a timeout, which cannot be right")
+    return problems
+
+
 def _check_declared_defaults() -> list[str]:
     """A step missing a key must behave the way the editor says it would."""
     problems = []
@@ -800,8 +834,12 @@ def _check_engine(template: Path, absent: Path, color: tuple[int, int, int],
         failures.append("engine did not report a double-click")
     if "123, 456" not in logged:
         failures.append("engine did not report the fixed-point click")
-    if "not there, skipping" not in logged:
+    if "not there" not in logged or "skipping" not in logged:
         failures.append("the optional step did not skip when its image was absent")
+    # It must also say how long it waited, because an optional step that is
+    # never there costs that much time on every single cycle.
+    if "not there after" not in logged:
+        failures.append("the skip did not say how long it waited first")
     steps_seen = {e["index"] for e in messages if e.get("kind") == "step"}
     if steps_seen != set(range(6)):
         failures.append(f"engine reported steps {sorted(steps_seen)}, expected 0-5")

@@ -117,6 +117,11 @@ Every box and search area is four editable numbers as well as a button. Drag
 one to create it, then type to stretch or nudge it. You should not have to
 re-drag a whole box to move an edge ten pixels.
 
+The three panes are separated by dividers you can drag: sequence against
+editor, and both against the log. Where you put them is remembered. Which pane
+needs to be big depends on what you are doing, so none of them is a fixed
+size.
+
 Pixie remembers the Dry run and Minimize settings, the window size and
 position, whether it was maximized, and which sequence you had open, so she
 comes back the way you left her. The size behind a maximized window is kept
@@ -194,11 +199,24 @@ Go back to the first step of this section
     section.
 ```
 
-`Give up after` is the timeout. It defaults to 30 seconds on a step that waits
-for something, so a section start point left at its default spends 30 seconds
-waiting before it hands over to the next section. If moving between screens
-feels slow, that is almost always why. Set it to 0 and it waits forever
-instead.
+`Give up after` is the timeout, and it is the setting that decides how long
+Pixie sits doing nothing. It defaults to 30 seconds on a step that waits for
+something, and 1 second on an "if it appears" step. Set it to 0 and it waits
+forever instead.
+
+**If a cycle feels slow, this is almost always why.** An optional step whose
+image never appears costs its whole timeout on every single pass: two of them
+at 3 seconds is 6 seconds of every cycle spent waiting for things that are not
+there. The log gives you the number to look for:
+
+```
+burst_lightning.png not there after 3s, skipping
+main_menu.png did not appear after 30s
+```
+
+Either shorten that step's own `Give up after`, or cap the whole section at
+once with `Cap every wait in here at (s)` on its divider. The cap only ever
+lowers a wait: a step already set to 0.5s keeps its 0.5s.
 
 The log tells you which is happening: `still waiting for main_menu.png, 15s so
 far (gives up in 15s)`.

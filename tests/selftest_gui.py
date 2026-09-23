@@ -744,6 +744,58 @@ def check_boxes_can_be_typed_into():
     return problems
 
 
+def check_panes_can_be_dragged():
+    """The dividers between sequence, editor and log move, and are remembered."""
+    import json
+    import tempfile
+
+    problems = []
+    original_state_path = gui.STATE_PATH
+    gui.STATE_PATH = Path(tempfile.mkdtemp()) / "state.json"
+    try:
+        first_root = tk.Tk()
+        first = gui.App(first_root)
+        first_root.deiconify()
+        first_root.geometry("1400x900+80+50")
+        first_root.update()
+        first_root.update_idletasks()
+
+        narrow = first.listbox.winfo_width()
+        first.split_across.sashpos(0, 640)
+        first.split_down.sashpos(0, 420)
+        first_root.update()
+        wide = first.listbox.winfo_width()
+        if wide <= narrow:
+            problems.append(f"dragging the divider did not widen the sequence "
+                            f"list ({narrow} -> {wide})")
+        if first.log_text.winfo_height() <= 1:
+            problems.append("the log collapsed to nothing")
+
+        first.save_preferences()
+        first.on_close()
+        written = json.loads(gui.STATE_PATH.read_text(encoding="utf-8"))
+        for name in ("split_across", "split_down"):
+            if not isinstance(written.get(name), int):
+                problems.append(f"{name} was not remembered")
+
+        second_root = tk.Tk()
+        second = gui.App(second_root)
+        second_root.deiconify()
+        second_root.geometry("1400x900+80+50")
+        second_root.update()
+        second_root.update_idletasks()
+        second_root.update()
+        back = second.split_across.sashpos(0)
+        if abs(back - 640) > 40:
+            problems.append(f"the divider came back at {back}, expected near 640")
+        second.on_close()
+        print(f"Panes ok: dividers move, remembered at {written['split_across']} "
+              f"and {written['split_down']}")
+    finally:
+        gui.STATE_PATH = original_state_path
+    return problems
+
+
 def check_window_size_is_remembered():
     """Maximized, and the size behind it, survive a restart and a capture."""
     import json
@@ -1042,7 +1094,8 @@ try:
 except Exception as error:  # noqa: BLE001
     failures.append(f"image cleanup check: {error!r}")
 
-for check in (check_boxes_can_be_typed_into, check_window_size_is_remembered,
+for check in (check_boxes_can_be_typed_into, check_panes_can_be_dragged,
+              check_window_size_is_remembered,
               check_settings_stick):
     try:
         failures.extend(check())
