@@ -104,6 +104,7 @@ def main() -> int:
     failures.extend(_check_section_pause())
     failures.extend(_check_restart_section())
     failures.extend(_check_a_check_guards_its_indented_steps())
+    failures.extend(_check_a_jump_sends_the_run_somewhere())
     failures.extend(_check_max_cycles_is_a_real_limit())
     failures.extend(_check_section_limits())
     failures.extend(_check_pick_order())
@@ -378,6 +379,81 @@ def _check_a_check_guards_its_indented_steps() -> list[str]:
         step("check", on_timeout="skip_block"), step("after")]).warnings()
     if not any("nothing is indented under it" in line for line in said):
         problems.append(f"a check set to skip nothing drew no warning: {said}")
+    return problems
+
+
+def _check_a_jump_sends_the_run_somewhere() -> list[str]:
+    """'Go somewhere else' does on purpose what a failure does by accident.
+
+    Every other branch is phrased as "if this is NOT found", which covers most
+    things because a screen going away is usually the same event as the next
+    one arriving. It is not always: a victory screen appearing over a game
+    still in progress is its own event, and inverting it is not possible.
+
+    Indented under a check, this is how "if this IS found, go there" is said.
+    """
+    ran: list[str] = []
+    seen = {"end": False}
+
+    class Watching(engine_mod.Engine):
+        def run_step(self, step):
+            if step.get("type") == "jump":
+                return super().run_step(step)
+            ran.append(step.get("tag", ""))
+            if step.get("tag") == "is it over":
+                return "ok" if seen["end"] else "timeout"
+            # Everything else reports nothing found, so each section hands
+            # over rather than repeating itself forever.
+            return "timeout"
+
+    def look(tag, on_timeout, indent=0):
+        made = {"type": "wait_for_image", "name": tag, "tag": tag,
+                "enabled": True, "image": "x", "on_timeout": on_timeout,
+                "pause": [0, 0]}
+        if indent:
+            made["indent"] = indent
+        return made
+
+    steps = [
+        {"type": "section", "name": "Playing", "enabled": True},
+        look("is it over", "skip_block"),
+        dict(step_defs.new_step("jump"), where="next_section", indent=1),
+        look("play a card", "next_section"),
+        {"type": "section", "name": "Finished", "enabled": True},
+        look("tidy up", "next_section"),
+    ]
+    sequence = engine_mod.Sequence(
+        name="jumping", steps=steps,
+        settings=engine_mod.Settings(step_pause_min=0, step_pause_max=0,
+                                     section_pause_min=0, section_pause_max=0,
+                                     cycle_pause_min=0, cycle_pause_max=0,
+                                     failsafe_corner=False))
+
+    problems = []
+    # While the game is on, the check fails, its jump is skipped, and play
+    # carries on in the first section.
+    seen["end"], ran[:] = False, []
+    Watching(sequence, dry_run=True).run(max_cycles=1)
+    if "tidy up" not in ran or ran[:2] != ["is it over", "play a card"]:
+        problems.append(f"with nothing detected it ran {ran}, expected to play "
+                        "a card before ever leaving the section")
+
+    # Once it is over, the check finds it and the jump leaves immediately -
+    # without running the step below it.
+    seen["end"], ran[:] = True, []
+    Watching(sequence, dry_run=True).run(max_cycles=1)
+    if "play a card" in ran:
+        problems.append(f"the jump did not leave the section: {ran}")
+    if ran != ["is it over", "tidy up"]:
+        problems.append(f"detecting the end ran {ran}, expected to go straight "
+                        "to the next section")
+    print(f"Jump step       : not detected -> {['is it over', 'play a card']}, "
+          f"detected -> {ran}")
+
+    # Everywhere a jump can go is somewhere a failure can go, so both run down
+    # the same branches rather than two copies of them.
+    if not set(step_defs.JUMP_TARGETS) <= set(step_defs.ON_TIMEOUT):
+        problems.append("a jump can go somewhere no 'if not found' can")
     return problems
 
 

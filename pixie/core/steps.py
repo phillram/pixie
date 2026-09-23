@@ -52,6 +52,13 @@ ON_TIMEOUT_CHOICES: tuple[tuple[str, str, str], ...] = (
      "Stops everything, as though you had pressed Stop."),
 )
 ON_TIMEOUT = tuple(key for key, _, _ in ON_TIMEOUT_CHOICES)
+
+# Where a "Go somewhere else" step can send the run. The same actions, minus
+# the two that only mean anything as a reaction to something not being found:
+# "carry on" is what happens anyway, and "skip the steps indented under it"
+# needs a check to have failed.
+JUMP_TARGETS = tuple(key for key in ON_TIMEOUT
+                     if key not in ("continue", "skip_block"))
 ON_TIMEOUT_LABELS = {key: label for key, label, _ in ON_TIMEOUT_CHOICES}
 ON_TIMEOUT_NOTES = {key: note for key, _, note in ON_TIMEOUT_CHOICES}
 
@@ -143,6 +150,9 @@ CHOICE_LABELS: dict[str, dict[str, str]] = {
     "mode": COLOR_MODE_LABELS,
     "match": COLOR_MATCH_LABELS,
     "pick": PICK_LABELS,
+    # A jump reads exactly like an 'if not found', because it does the same
+    # things - just on purpose rather than on a failure. One set of words.
+    "where": {key: ON_TIMEOUT_LABELS[key] for key in JUMP_TARGETS},
     "must_reach": REACH_LABELS,
     "anchor": ANCHOR_LABELS,
 }
@@ -391,6 +401,28 @@ STEP_TYPES: dict[str, StepType] = {
         describe=lambda s: "# " + (str(s.get("text") or "").strip().splitlines()
                                    or ["(empty note)"])[0][:70],
     ),
+    "jump": StepType(
+        key="jump",
+        label="Go somewhere else",
+        blurb="Changes where the run goes next, and nothing else. On its own "
+              "it is unconditional, which is rarely what you want - indent it "
+              "under a check and it becomes 'if this is found, go there'.\n\n"
+              "Every other branch in a sequence is phrased the other way "
+              "round, as 'if this is NOT found'. That covers most things, "
+              "because a screen you are waiting on going away is usually the "
+              "same event as the next one arriving. When it is not - a "
+              "victory screen appearing over a game still in progress - this "
+              "is how you say it.",
+        fields=(
+            Field("where", "choice", "Go to", "next_section",
+                  choices=JUMP_TARGETS,
+                  hint="Where to carry on from. Reads exactly like the 'If it "
+                       "is not found' settings, because it does the same "
+                       "things - just on purpose rather than on a failure."),
+        ),
+        describe=lambda s: "-> " + CHOICE_LABELS["where"].get(
+            s.get("where", "next_section"), "somewhere").lower(),
+    ),
     "wait_for_color": StepType(
         key="wait_for_color",
         label="Wait for a color",
@@ -595,7 +627,7 @@ _PAUSE_FIELD = Field(
 # Labels rather than instructions: never executed, never paused after, and
 # never given a number in the sequence list.
 MARKERS = ("section", "note")
-NO_PAUSE = MARKERS
+NO_PAUSE = MARKERS + ("jump",)
 
 STEP_TYPES = {
     key: (step_type if key in NO_PAUSE
@@ -616,7 +648,7 @@ STEP_TYPES = {
 # enforces both, so a new type cannot be declared above and then quietly go
 # missing from the only menu that can create it.
 STEP_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("Structure", ("section", "note")),
+    ("Structure", ("section", "note", "jump")),
     ("Wait until something appears",
      ("wait_for_image", "wait_for_color", "wait_for_color_in_area")),
     ("Click what Pixie finds",
@@ -629,6 +661,7 @@ STEP_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
 MENU_HINTS: dict[str, str] = {
     "section": "start a new section",
     "note": "a reminder to yourself, never run",
+    "jump": "send the run somewhere else",
     "wait_for_image": "hold here until a picture shows up",
     "wait_for_color": "hold here until one spot turns a color",
     "wait_for_color_in_area": "find a glow and remember where it is",

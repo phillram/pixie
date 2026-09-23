@@ -188,6 +188,7 @@ image if it appears` without opening both.
 | **Structure** | |
 | Section divider | Marks the start of a section |
 | Note | Does nothing. Somewhere to explain the sequence to yourself |
+| Go somewhere else | Sends the run to another section or back to the top |
 | **Wait until something appears** | |
 | Wait for an image | Pause until a picture appears. Does not click |
 | Wait for a color | Pause until a color appears at one spot |
@@ -265,6 +266,43 @@ waited for is itself what stops the other steps from finding anything. A
 targeting prompt does exactly that: while it is up, no card in hand is
 playable, so a card check placed above it restarts the section forever and the
 step that would clear the prompt is never reached.
+
+### When you need "if this IS found"
+
+Every branch so far is phrased the other way round: `If it is not found`. That
+covers most things, because a screen you were waiting on going away is usually
+the same event as the next one arriving - a hand of cards disappearing *is* the
+game ending.
+
+Sometimes it is not. A victory screen appearing over a game still in progress
+is its own event, and there is nothing whose absence means the same thing.
+
+`Go somewhere else` is a step that does nothing but change where the run goes
+next. On its own it is unconditional, which is rarely useful. Indent it under a
+check and it becomes the missing half:
+
+```
+ 1. Look for the victory screen    If it is not found: skip the steps indented under it
+     ↳ 2. Go somewhere else        -> leave this section and start the next one
+ 3. Select playable card
+```
+
+If the victory screen is there, step 2 runs and the section is over. If it is
+not, step 2 is skipped and play carries on at 3.
+
+It can go anywhere an `If it is not found` can - the same four places, with the
+same words for them, because it runs down the same branches in the engine.
+`check_wiring.py` fails if those two lists ever drift apart.
+
+### Moving steps around a group
+
+`↑` and `↓` understand groups:
+
+* Moving a check moves everything indented under it, as one thing, and it
+  steps over a neighbouring group rather than landing inside it
+* Moving an indented step reorders it within its group
+* At either end of a group, moving further takes that step out of it - only
+  the first and last can do that without splitting the group in half
 
 Pixie checks the two halves agree, because an indent that is not actually
 guarding anything looks identical to one that is:

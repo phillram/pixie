@@ -130,6 +130,17 @@ def main() -> int:
             problems.append(f"'if not found' option {value!r} has no note")
     print(f"  {len(steps.ON_TIMEOUT)} 'if not found' options, all acted on")
 
+    # A 'Go somewhere else' step runs down the same branches, so anything it
+    # can be set to has to be one of them.
+    for value in steps.JUMP_TARGETS:
+        if value not in carried_out:
+            problems.append(f"'go somewhere else' offers {value!r}, but "
+                            "run_cycle never acts on it")
+        if value not in steps.ON_TIMEOUT:
+            problems.append(f"'go somewhere else' offers {value!r}, which is "
+                            "not one of the 'if not found' actions")
+    print(f"  {len(steps.JUMP_TARGETS)} places a jump can send the run")
+
     # Every level the engine logs at needs a color in the GUI.
     from pixie.ui.app import LOG_COLORS
 

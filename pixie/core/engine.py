@@ -278,6 +278,8 @@ class Engine:
         # at the click is it known which edge is being aimed at.
         self.last_pieces = 1
         self.last_clipped = ""
+        # Where the last 'Go somewhere else' step asked to go.
+        self.jump_to = "next_section"
 
     # -- plumbing --------------------------------------------------------
 
@@ -763,6 +765,16 @@ class Engine:
     def _do_note(self, _step: dict[str, Any]) -> str:
         return "ok"
 
+    def _do_jump(self, step: dict[str, Any]) -> str:
+        """Send the run somewhere else, deliberately rather than on a failure.
+
+        Returns its own outcome rather than "ok", because "ok" means "carry on
+        with the next step" and that is the one thing this must not do.
+        """
+        self.jump_to = str(self._value(step, "where", "next_section"))
+        self.log(f"    {step_defs.CHOICE_LABELS['where'].get(self.jump_to, self.jump_to).lower()}")
+        return "jump"
+
     def _do_wait(self, step: dict[str, Any]) -> str:
         low = float(step.get("seconds", 1.0))
         high = float(step.get("seconds_max", low) or low)
@@ -913,7 +925,14 @@ class Engine:
                 index += 1
                 continue
 
-            on_timeout = self._value(step, "on_timeout", "restart")
+            # Two ways to end up somewhere other than the next step: a step
+            # failed and says what to do about it, or a 'Go somewhere else'
+            # step said so on purpose. They mean the same things, so they run
+            # down the same branches below rather than a second copy of them.
+            if outcome == "jump":
+                on_timeout = self.jump_to
+            else:
+                on_timeout = self._value(step, "on_timeout", "restart")
             if on_timeout not in step_defs.ON_TIMEOUT:
                 # Never from the GUI, but a hand-edited file can say anything,
                 # and silently picking a branch would be worse than saying so.

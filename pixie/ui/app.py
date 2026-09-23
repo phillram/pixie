@@ -1064,14 +1064,74 @@ class App:
         self._move(1)
 
     def _move(self, delta: int) -> None:
+        """Move the selected step, keeping groups intact.
+
+        A plain swap breaks a group two ways: a check moved away from the
+        steps it guards leaves them behind, and an indented step swapped past
+        its check ends up above it, where the indent means nothing and gets
+        cleared. Either way you lose the grouping just by nudging something.
+        """
+        steps = self.sequence.steps
         at = self.selected
-        to = at + delta
-        if not (0 <= at < len(self.sequence.steps) and 0 <= to < len(self.sequence.steps)):
+        if not (0 <= at < len(steps)):
             return
-        items = self.sequence.steps
-        items[at], items[to] = items[to], items[at]
+        if step_defs.indent_of(steps[at]):
+            self._move_inside_group(at, delta)
+        else:
+            self._move_with_group(at, delta)
+
+    def _move_with_group(self, at: int, delta: int) -> None:
+        """Move a step and everything indented under it, as one thing."""
+        steps = self.sequence.steps
+        _, after = step_defs.block_of(steps, at)
+        group = steps[at:after]
+
+        if delta < 0:
+            if at == 0:
+                return
+            # Land above the step above, not inside its group.
+            target = at - 1
+            while target > 0 and step_defs.indent_of(steps[target]):
+                target -= 1
+        else:
+            if after >= len(steps):
+                return
+            # Clear the whole of the next group, not just its first step.
+            _, past = step_defs.block_of(steps, after)
+            target = past - len(group)
+
+        del steps[at:after]
+        steps[target:target] = group
         self.mark_dirty()
-        self.refresh_list(keep=to)
+        self.refresh_list(keep=target)
+
+    def _move_inside_group(self, at: int, delta: int) -> None:
+        """Reorder an indented step, or let it step out at either end."""
+        steps = self.sequence.steps
+        owner = at - 1
+        while owner >= 0 and step_defs.indent_of(steps[owner]):
+            owner -= 1
+        first, after = step_defs.block_of(steps, owner)
+        to = at + delta
+
+        if first <= to < after:
+            steps[at], steps[to] = steps[to], steps[at]
+            self.mark_dirty()
+            self.refresh_list(keep=to)
+            return
+
+        # At either end of the group, moving further takes it out. Only the
+        # first and last can do that without splitting the group in half.
+        if at == first and delta < 0:
+            leaving = steps.pop(at)
+            leaving.pop("indent", None)
+            steps.insert(owner, leaving)
+            self.mark_dirty()
+            self.refresh_list(keep=owner)
+        elif at == after - 1 and delta > 0:
+            steps[at].pop("indent", None)
+            self.mark_dirty()
+            self.refresh_list(keep=at)
 
     def indent(self) -> None:
         """Put the selected step under the one above it."""

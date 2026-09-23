@@ -1233,6 +1233,69 @@ def check_indenting_steps():
     return problems
 
 
+def check_moving_keeps_groups_together():
+    """Nudging a step must not quietly ungroup it."""
+    problems = []
+
+    def look(name):
+        step = dict(step_defs.new_step("wait_for_image"), name=name)
+        step["on_timeout"] = "skip_block"
+        return step
+
+    check = look("Check")
+    one = dict(step_defs.new_step("click_box"), name="One")
+    two = dict(step_defs.new_step("click_box"), name="Two")
+    other = look("Other")
+
+    app.sequence = engine_mod.Sequence(name="moves",
+                                       steps=[check, one, two, other])
+    app.refresh_list(keep=1)
+    app.selected = 1
+    app.indent()
+    app.selected = 2
+    app.indent()
+    root.update()
+    if [step_defs.indent_of(s) for s in app.sequence.steps] != [0, 1, 1, 0]:
+        problems.append(f"setting up the group failed: "
+                        f"{[s['name'] for s in app.sequence.steps]}")
+        return problems
+
+    # 1. Moving the check down takes its group with it.
+    app.selected = 0
+    app.move_down()
+    root.update()
+    names = [s["name"] for s in app.sequence.steps]
+    if names != ["Other", "Check", "One", "Two"]:
+        problems.append(f"moving the check gave {names}, expected its group "
+                        "to travel with it")
+    if [step_defs.indent_of(s) for s in app.sequence.steps] != [0, 0, 1, 1]:
+        problems.append("the group lost its indent when the check moved")
+
+    # 2. Reordering inside the group keeps both indented.
+    app.selected = 2
+    app.move_down()
+    root.update()
+    names = [s["name"] for s in app.sequence.steps]
+    if names != ["Other", "Check", "Two", "One"]:
+        problems.append(f"reordering inside the group gave {names}")
+    if [step_defs.indent_of(s) for s in app.sequence.steps] != [0, 0, 1, 1]:
+        problems.append("reordering inside the group dropped an indent")
+
+    # 3. Moving the last one down again takes it out of the group, which is
+    #    the only thing it can mean - and does not split the group in half.
+    app.selected = 3
+    app.move_down()
+    root.update()
+    if step_defs.indent_of(app.sequence.steps[3]):
+        problems.append("the last step in a group could not step out of it")
+    if not step_defs.indent_of(app.sequence.steps[2]):
+        problems.append("stepping out of a group took the others with it")
+
+    print("Moving ok: a check carries its group, reordering inside keeps it, "
+          "the last one can step out")
+    return problems
+
+
 def check_add_menu_is_grouped():
     """Add step lists every type under a heading, with a hint on each."""
     problems = []
@@ -1414,7 +1477,8 @@ for check in (check_boxes_can_be_typed_into, check_panes_can_be_dragged,
               check_testing_a_step_runs_it_once,
               check_window_size_is_remembered,
               check_settings_stick, check_add_menu_is_grouped,
-              check_indenting_steps):
+              check_indenting_steps,
+              check_moving_keeps_groups_together):
     try:
         failures.extend(check())
     except Exception as error:  # noqa: BLE001
