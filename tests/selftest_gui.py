@@ -172,6 +172,99 @@ def check_typing_does_not_steal_focus():
     return problems
 
 
+def check_image_and_color_previews():
+    """An image step shows the picture; a color step shows the color."""
+    import cv2
+    import numpy as np
+
+    from pixie.paths import IMAGES_DIR, APP_DIR
+
+    problems = []
+    IMAGES_DIR.mkdir(parents=True, exist_ok=True)
+    sample = IMAGES_DIR / "_preview_probe.png"
+    cv2.imwrite(str(sample), np.random.randint(0, 255, (48, 90, 3), dtype=np.uint8))
+
+    try:
+        step = step_defs.new_step("click_image")
+        step["image"] = sample.relative_to(APP_DIR).as_posix()
+        color_step = step_defs.new_step("wait_for_color")
+        color_step["color"] = [12, 200, 240]
+        missing = step_defs.new_step("click_image")
+        missing["image"] = "images/_does_not_exist.png"
+
+        app.sequence = engine_mod.Sequence(
+            name="previews", steps=[step, color_step, missing])
+        app.refresh_list(keep=0)
+        root.update()
+
+        # 1. a real image renders as an actual picture
+        app.selected = 0
+        app.build_editor()
+        root.update()
+        labels = [w for w in _descendants(app.editor)
+                  if isinstance(w, tk.Label) and getattr(w, "image", None)]
+        if not labels:
+            problems.append("image step showed no thumbnail")
+        else:
+            shown = labels[0].image
+            print(f"  image preview: {shown.width()}x{shown.height()} thumbnail "
+                  f"of a 90x48 capture")
+        if not any("90 x 48" in _text_of(w) for w in _descendants(app.editor)):
+            problems.append("image preview did not report the pixel size")
+
+        # 2. a color renders as a filled swatch of that color
+        app.selected = 1
+        app.build_editor()
+        root.update()
+        wanted = "#%02x%02x%02x" % (12, 200, 240)
+        swatches = [w for w in _descendants(app.editor)
+                    if isinstance(w, tk.Frame) and str(w.cget("bg")) == wanted]
+        if not swatches:
+            problems.append(f"color step showed no swatch of {wanted}")
+        else:
+            print(f"  color preview: swatch filled {wanted}")
+        if not any("#0cc8f0" in _text_of(w).lower() for w in _descendants(app.editor)):
+            problems.append("color field did not show the hex value")
+
+        # 3. a missing file says so rather than rendering nothing
+        app.selected = 2
+        app.build_editor()
+        root.update()
+        if not any("missing" in _text_of(w).lower() for w in _descendants(app.editor)):
+            problems.append("a missing image file was not reported in the editor")
+        else:
+            print("  missing file: reported in the editor")
+    finally:
+        sample.unlink(missing_ok=True)
+    return problems
+
+
+def _descendants(widget):
+    for child in widget.winfo_children():
+        yield child
+        yield from _descendants(child)
+
+
+def _text_of(widget) -> str:
+    """Whatever this widget is showing.
+
+    Entry-like widgets must be asked with get(). cget("text") on a ttk entry
+    returns the name of its text variable, not the text, which looks like a
+    real answer and silently is not.
+    """
+    from tkinter import ttk
+
+    if isinstance(widget, (tk.Entry, ttk.Entry, ttk.Combobox, ttk.Spinbox)):
+        try:
+            return str(widget.get())
+        except tk.TclError:
+            return ""
+    try:
+        return str(widget.cget("text"))
+    except tk.TclError:
+        return ""
+
+
 def check_preferences_persist():
     """Dry run, minimize and the window geometry survive a restart."""
     import json
@@ -186,7 +279,11 @@ def check_preferences_persist():
         first = gui.App(first_root)
         first.dry_run.set(False)
         first.hide_while_running.set(False)
-        first_root.geometry("1234x789+150+90")
+        # Must be above the window's own minimum, or Tk clamps it and the
+        # size we read back is the minimum rather than what we asked for.
+        min_width, min_height = first_root.minsize()
+        want = f"{min_width + 120}x{min_height + 90}+150+90"
+        first_root.geometry(want)
         first_root.update()
         first.save_preferences()
         first.on_close()
@@ -204,8 +301,9 @@ def check_preferences_persist():
             problems.append("dry run was not restored")
         if second.hide_while_running.get() is not False:
             problems.append("minimize setting was not restored")
-        if not geometry.startswith("1234x789"):
-            problems.append(f"window size was not restored, got {geometry}")
+        if not geometry.startswith(want.split("+")[0]):
+            problems.append(f"window size was not restored: asked for {want}, "
+                            f"got {geometry}")
         second.on_close()
 
         # A position on a monitor that no longer exists must be ignored.
@@ -232,6 +330,11 @@ try:
     failures.extend(check_typing_does_not_steal_focus())
 except Exception as error:  # noqa: BLE001
     failures.append(f"typing check: {error!r}")
+
+try:
+    failures.extend(check_image_and_color_previews())
+except Exception as error:  # noqa: BLE001
+    failures.append(f"preview check: {error!r}")
 
 try:
     failures.extend(check_preferences_persist())

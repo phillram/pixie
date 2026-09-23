@@ -70,8 +70,16 @@ pixel to say what you mean.
 `Test this step` runs only the selected step and reports what it found. It is
 the quickest way to tune a match without running everything.
 
+Image and color fields show you what they hold. An image step displays the
+picture it captured along with its size in pixels, and tells you plainly if the
+file has gone missing. A color field shows a filled swatch and the hex value
+next to the RGB numbers.
+
 Step names are labels. They appear in the list and in the log and nothing else
-reads them, so rename anything at any time without affecting what it does.
+reads them, so rename anything at any time without affecting what it does. A
+captured image keeps working after a rename: the step name only seeds the
+filename when the image is first captured, and the stored path is independent
+of it afterwards.
 
 Pixie remembers the Dry run and Minimize settings, the window size and position,
 and which sequence you had open, so she comes back the way you left her. A saved

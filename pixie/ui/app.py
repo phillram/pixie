@@ -728,8 +728,9 @@ class App:
             "offset": self._field_offset, "key": self._field_key,
             "pause": self._field_pause, "multiline": self._field_multiline,
         }.get(spec.kind, self._field_number)
-        builder(step, spec, row)
-        row += 1
+        # A builder returns how many extra rows it used, so a field can put a
+        # preview underneath itself.
+        row += 1 + (builder(step, spec, row) or 0)
 
         if spec.hint:
             ttk.Label(self.editor, text=spec.hint, style="Blurb.TLabel",
@@ -755,13 +756,69 @@ class App:
         entry.grid(row=row, column=1, sticky="ew", pady=4)
         return entry
 
-    def _field_image(self, step: dict[str, Any], spec: step_defs.Field, row: int) -> None:
+    def _field_image(self, step: dict[str, Any], spec: step_defs.Field, row: int) -> int:
         var = tk.StringVar(value=str(step.get(spec.key) or ""))
         self._readonly_entry(row, var)
+
+        preview = ttk.Frame(self.editor, style="Panel.TFrame")
+        preview.grid(row=row + 1, column=1, columnspan=2, sticky="w", pady=(2, 6))
+
         ttk.Button(self.editor, text="Capture...", style="Tool.TButton",
-                   command=lambda: self._capture_image(step, spec, var)).grid(
+                   command=lambda: self._capture_image(step, spec, var, preview)).grid(
             row=row, column=2, sticky="w", padx=(8, 0))
+
+        self._show_image_preview(preview, step.get(spec.key))
         self.field_vars[spec.key] = var
+        return 1
+
+    def _show_image_preview(self, holder: ttk.Frame, relative: Any) -> None:
+        """Draw the captured image itself, so you can see which one this is.
+
+        A path like 'images/click_an_image_if_it_appears_2.png' tells you
+        almost nothing when several steps look similar.
+        """
+        for child in holder.winfo_children():
+            child.destroy()
+
+        if not relative:
+            ttk.Label(holder, text="nothing captured yet",
+                      style="Blurb.TLabel").pack(anchor="w")
+            return
+
+        path = Path(relative)
+        if not path.is_absolute():
+            path = PROJECT_DIR / path
+        if not path.exists():
+            ttk.Label(holder, text=f"file is missing: {relative}",
+                      foreground=theme.ERROR, background=theme.PANEL,
+                      font=theme.FONT_SMALL).pack(anchor="w")
+            return
+
+        try:
+            from PIL import Image, ImageTk
+
+            with Image.open(path) as opened:
+                full_width, full_height = opened.size
+                shown = opened.copy()
+            limit = (int(300 * self.scale), int(130 * self.scale))
+            shown.thumbnail(limit, Image.LANCZOS)
+            photo = ImageTk.PhotoImage(shown)
+        except Exception as error:  # noqa: BLE001 - a bad file should not crash the editor
+            ttk.Label(holder, text=f"cannot read the image: {error}",
+                      foreground=theme.ERROR, background=theme.PANEL,
+                      font=theme.FONT_SMALL).pack(anchor="w")
+            return
+
+        frame = tk.Frame(holder, bg=theme.BORDER)
+        frame.pack(anchor="w")
+        label = tk.Label(frame, image=photo, bd=0, bg=theme.PANEL)
+        label.image = photo          # Tk drops the image unless a reference lives on
+        label.pack(padx=1, pady=1)
+
+        note = f"{full_width} x {full_height} pixels"
+        if (full_width, full_height) != shown.size:
+            note += f"  (shown at {shown.size[0]} x {shown.size[1]})"
+        ttk.Label(holder, text=note, style="Blurb.TLabel").pack(anchor="w", pady=(3, 0))
 
     def _field_point(self, step: dict[str, Any], spec: step_defs.Field, row: int) -> None:
         value = step.get(spec.key)
@@ -778,18 +835,24 @@ class App:
         holder.grid(row=row, column=1, sticky="ew", pady=4)
         holder.columnconfigure(1, weight=1)
 
-        swatch = tk.Frame(holder, width=34, height=26, highlightthickness=1,
+        swatch = tk.Frame(holder, width=int(64 * self.scale),
+                          height=int(30 * self.scale), highlightthickness=1,
                           highlightbackground=theme.BORDER,
                           bg="#%02x%02x%02x" % tuple(value))
-        swatch.grid(row=0, column=0, padx=(0, 8))
+        swatch.grid(row=0, column=0, padx=(0, 10))
         swatch.grid_propagate(False)
-        var = tk.StringVar(value=f"RGB({value[0]}, {value[1]}, {value[2]})")
+        var = tk.StringVar(value=self._color_text(value))
         ttk.Entry(holder, textvariable=var, state="readonly").grid(row=0, column=1, sticky="ew")
 
         ttk.Button(self.editor, text="Pick...", style="Tool.TButton",
                    command=lambda: self._capture_color(step, spec, var, swatch)).grid(
             row=row, column=2, sticky="w", padx=(8, 0))
         self.field_vars[spec.key] = var
+
+    @staticmethod
+    def _color_text(rgb: Any) -> str:
+        r, g, b = (int(v) for v in rgb)
+        return f"RGB({r}, {g}, {b})    #{r:02x}{g:02x}{b:02x}"
 
     def _field_region(self, step: dict[str, Any], spec: step_defs.Field, row: int) -> None:
         value = step.get(spec.key)
@@ -979,7 +1042,7 @@ class App:
         return candidate
 
     def _capture_image(self, step: dict[str, Any], spec: step_defs.Field,
-                       var: tk.StringVar) -> None:
+                       var: tk.StringVar, preview: ttk.Frame | None = None) -> None:
         picker = self._pick("region")
         if picker is None or picker.result is None:
             return
@@ -991,6 +1054,8 @@ class App:
         relative = path.relative_to(PROJECT_DIR).as_posix()
         self._set_value(step, spec.key, relative)
         var.set(relative)
+        if preview is not None:
+            self._show_image_preview(preview, relative)
         self.log(f"Saved {relative}  ({w}x{h})", "good")
         if w * h < 300:
             self.log("That is a very small image - it may match the wrong thing. "
@@ -1014,7 +1079,7 @@ class App:
         rgb = picker.color_at(*picker.result)
         x, y = picker.to_absolute(picker.result)
         self._set_value(step, spec.key, list(rgb))
-        var.set(f"RGB({rgb[0]}, {rgb[1]}, {rgb[2]})")
+        var.set(self._color_text(rgb))
         swatch.configure(bg="#%02x%02x%02x" % rgb)
         self.log(f"Color RGB{rgb} sampled at {x}, {y}", "good")
         if step.get("pos") is None:
