@@ -168,6 +168,10 @@ class ColorHit:
     width: int
     height: int
     pixels: int     # how many pixels actually matched
+    # Which edges of the search area this patch runs into, if any. A patch
+    # that touches an edge is probably a cut-off piece of something bigger,
+    # which makes its size and its edges untrustworthy.
+    clipped: str = ""
 
     @property
     def center(self) -> tuple[int, int]:
@@ -319,8 +323,17 @@ def _search(
     for blob_left, blob_top, width, height, area in blobs:
         left = region[0] + blob_left
         top = region[1] + blob_top
+        touching = []
+        if blob_left <= 0:
+            touching.append("left")
+        if blob_top <= 0:
+            touching.append("top")
+        if blob_left + width >= region[2]:
+            touching.append("right")
+        if blob_top + height >= region[3]:
+            touching.append("bottom")
         hit = ColorHit(left + width // 2, top + height // 2,
-                       left, top, width, height, area)
+                       left, top, width, height, area, " and ".join(touching))
         # Why a patch is not the thing we are looking for, kept as words so
         # the GUI can show it rather than leaving you to guess.
         if area < min_pixels:

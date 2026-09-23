@@ -375,10 +375,14 @@ class MatchViewer:
         if kept:
             report.insert("end", f"Would be used, in order ({step.get('pick')}):\n",
                           "good")
-            for number, hit in enumerate(kept, start=1):
+            for number, (hit, note) in enumerate(kept, start=1):
                 report.insert("end", f"  {number}. {hit.width}x{hit.height} at "
                                      f"{hit.left}, {hit.top}   {hit.pixels} pixels"
-                                     f"   middle {hit.x}, {hit.y}\n")
+                                     f"   middle {hit.x}, {hit.y}   {note}\n")
+                if hit.clipped:
+                    report.insert(
+                        "end", f"      runs off the {hit.clipped} of the search "
+                               "area, so it is cut off - widen the area\n", "warn")
         else:
             report.insert("end", "Nothing would be used.\n", "warn")
         if dropped:

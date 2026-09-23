@@ -796,6 +796,73 @@ def check_panes_can_be_dragged():
     return problems
 
 
+def check_what_matches_window():
+    """The What matches? window must actually list the patches it found.
+
+    Regression test. The viewer was reading the patch list in the shape it
+    had before saturation notes were added, so it rendered its heading and
+    then threw - leaving a window with 'Would be used, in order' and nothing
+    underneath. Building the window is the only way to catch that.
+    """
+    import cv2
+    import numpy as np
+
+    from pixie.system import screen as screen_mod
+
+    problems = []
+
+    def hsv(h, s, v):
+        return tuple(int(c) for c in cv2.cvtColor(
+            np.array([[[h, s, v]]], dtype=np.uint8), cv2.COLOR_HSV2BGR)[0, 0])
+
+    # A vivid outline that runs off the left edge, plus a clean one.
+    frame = np.zeros((300, 900, 3), dtype=np.uint8)
+    frame[:, :] = hsv(110, 80, 60)
+    frame[40:260, 0:40] = hsv(90, 250, 250)        # cut off by the left edge
+    for y0, y1, x0, x1 in ((60, 76, 400, 700), (240, 256, 400, 700),
+                           (60, 256, 400, 416), (60, 256, 684, 700)):
+        frame[y0:y1, x0:x1] = hsv(90, 250, 250)    # a whole outline
+
+    original = screen_mod.grab
+    screen_mod.grab = lambda _region=None: frame
+    try:
+        picture, kept, dropped = screen_mod.explain_colors(
+            (0, 0, 900, 300), (37, 254, 254), tolerance=14, min_pixels=39,
+            match="hue", order="leftmost", join=20)
+    finally:
+        screen_mod.grab = original
+
+    if len(kept) < 2:
+        problems.append(f"the sample only produced {len(kept)} patches")
+        return problems
+
+    step = dict(step_defs.new_step("wait_for_color_in_area"), name="probe")
+    root.deiconify()
+    root.update()
+    try:
+        viewer = gui.MatchViewer(root, picture, kept, dropped, step)
+        root.update()
+        shown = [w for w in _descendants(viewer.window) if isinstance(w, tk.Text)]
+        if not shown:
+            problems.append("the window has no report in it")
+            return problems
+        text = shown[0].get("1.0", "end")
+        for wanted in ("1.", "pixels", "saturation"):
+            if wanted not in text:
+                problems.append(f"the report does not mention {wanted!r}: {text!r}")
+        if text.count("\n") < len(kept) + 1:
+            problems.append(f"the report has {text.count(chr(10))} lines for "
+                            f"{len(kept)} patches - it stopped early")
+        if "cut off" not in text:
+            problems.append("a patch running off the edge was not flagged as "
+                            f"cut off: {text!r}")
+        print("What matches ok: " + text.strip().splitlines()[1].strip()[:70])
+        viewer.window.destroy()
+    finally:
+        root.withdraw()
+    return problems
+
+
 def check_window_size_is_remembered():
     """Maximized, and the size behind it, survive a restart and a capture."""
     import json
@@ -1095,6 +1162,7 @@ except Exception as error:  # noqa: BLE001
     failures.append(f"image cleanup check: {error!r}")
 
 for check in (check_boxes_can_be_typed_into, check_panes_can_be_dragged,
+              check_what_matches_window,
               check_window_size_is_remembered,
               check_settings_stick):
     try:

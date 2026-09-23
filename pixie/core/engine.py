@@ -416,6 +416,26 @@ class Engine:
         self.last_candidates = len(hits)
         return hits[0] if hits else None
 
+    def _edge_warning(self, hit: Any, step: dict[str, Any]) -> None:
+        """Say when a patch runs off the search area, because then it lies.
+
+        A patch cut off by the edge is a fragment of something bigger. Its
+        size is wrong, and the edge it was cut on is the boundary of the
+        search area rather than the edge of the thing -- so aiming at that
+        edge aims at the crop.
+        """
+        if not getattr(hit, "clipped", ""):
+            return
+        anchor = str(self._value(step, "anchor", "middle"))
+        aimed_at_the_cut = any(side in anchor for side in hit.clipped.split(" and "))
+        note = (f"    this patch runs off the {hit.clipped} of the search area, "
+                "so it is probably only part of what is there")
+        if aimed_at_the_cut:
+            note += " - and you are aiming at that cut edge. Widen the area."
+        else:
+            note += ". Widen the area if clicks land oddly."
+        self.log(note, "warn")
+
     def _which_one(self, step: dict[str, Any]) -> str:
         """Which of several patches was taken, and whether that looks wrong."""
         if self.last_candidates <= 1:
@@ -459,6 +479,7 @@ class Engine:
         self.last_box = (hit.left, hit.top, hit.width, hit.height)
         self.log(f"    found it - {hit.pixels} pixels in a "
                  f"{hit.width}x{hit.height} box{self._which_one(step)}")
+        self._edge_warning(hit, step)
         self._click(*self._aim(step, self.last_box), step, "the color")
         return "ok"
 
@@ -488,6 +509,7 @@ class Engine:
         self.log(f"    found RGB{target} - {hit.pixels} pixels in a "
                  f"{hit.width}x{hit.height} box, center {hit.x}, {hit.y}"
                  f"{self._which_one(step)}")
+        self._edge_warning(hit, step)
         return "ok"
 
     def _do_wait_for_image(self, step: dict[str, Any]) -> str:
