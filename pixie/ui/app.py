@@ -328,9 +328,11 @@ class App:
         root.bind("<Control-o>", lambda _e: self.open())
         root.bind("<F5>", lambda _e: self.toggle_run())
 
-        self._restore_last_sequence()
+        state = self._read_state()
+        self._restore_preferences(state)
+        self._restore_last_sequence(state)
         self.refresh_list()
-        self.root.after(80, self._drain_events)
+        self._drain_job: str | None = self.root.after(80, self._drain_events)
         self.log("Ready. Build a sequence on the left, then press Start.", "muted")
         self.log("Stop any time with the Stop button, F8, or the mouse in the "
                  "top-left corner of the screen.", "muted")
@@ -372,14 +374,15 @@ class App:
         self.run_tip = theme.tip(self.run_button, self._run_tip_text())
 
         dry = ttk.Checkbutton(bar, text="Dry run (log clicks, don't send them)",
-                              variable=self.dry_run)
+                              variable=self.dry_run, command=self.save_preferences)
         dry.pack(side="left", padx=(14, 0))
         theme.tip(dry, "Does the full detection and writes every click it WOULD "
                        "send to the log, without sending any of them. Leave this "
                        "on until the log looks right.")
 
         minimize = ttk.Checkbutton(bar, text="Minimize while running (untick to watch)",
-                                   variable=self.hide_while_running)
+                                   variable=self.hide_while_running,
+                                   command=self.save_preferences)
         minimize.pack(side="left", padx=(14, 0))
         theme.tip(minimize, "Pixie hides herself while running so she isn't sitting "
                             "on top of the thing she's clicking. She keeps going - "
@@ -551,27 +554,44 @@ class App:
 
     # -- sequence list ---------------------------------------------------
 
+    @staticmethod
+    def _row_label(index: int, step: dict[str, Any]) -> tuple[str, str | None]:
+        """How one step reads in the list, and what color it should be."""
+        enabled = step.get("enabled", True)
+        kind = step.get("type")
+        if kind == "section":
+            return "  " + step_defs.describe(step), theme.ACCENT
+        if kind == "note":
+            return "     " + step_defs.describe(step), theme.MUTED
+        prefix = f"{index + 1:>2}. " if enabled else f"{index + 1:>2}. - "
+        return prefix + step_defs.describe(step), None if enabled else theme.DISABLED
+
+    def _refresh_row(self, index: int) -> None:
+        """Redraw a single row, leaving every other widget untouched.
+
+        Rebuilding the whole editor here would destroy the entry the user is
+        currently typing into, which takes the keyboard focus with it. That is
+        why this exists separately from refresh_list.
+        """
+        if not (0 <= index < self.listbox.size()):
+            return
+        label, color = self._row_label(index, self.sequence.steps[index])
+        was_selected = index in self.listbox.curselection()
+        self.listbox.delete(index)
+        self.listbox.insert(index, label)
+        if color:
+            self.listbox.itemconfigure(index, foreground=color)
+        if was_selected:
+            self.listbox.selection_set(index)
+
     def refresh_list(self, keep: int | None = None) -> None:
         selection = keep if keep is not None else self.selected
         self.listbox.delete(0, "end")
         for index, step in enumerate(self.sequence.steps):
-            enabled = step.get("enabled", True)
-            kind = step.get("type")
-            if kind == "section":
-                label = "  " + step_defs.describe(step)
-            elif kind == "note":
-                label = "     " + step_defs.describe(step)
-            else:
-                label = (f"{index + 1:>2}. " if enabled
-                         else f"{index + 1:>2}. - ") + step_defs.describe(step)
+            label, color = self._row_label(index, step)
             self.listbox.insert("end", label)
-
-            if not enabled:
-                self.listbox.itemconfigure(index, foreground=theme.DISABLED)
-            elif kind == "section":
-                self.listbox.itemconfigure(index, foreground=theme.ACCENT)
-            elif kind == "note":
-                self.listbox.itemconfigure(index, foreground=theme.MUTED)
+            if color:
+                self.listbox.itemconfigure(index, foreground=color)
         if self.sequence.steps:
             selection = max(0, min(selection, len(self.sequence.steps) - 1))
             self.listbox.selection_clear(0, "end")
@@ -723,9 +743,10 @@ class App:
             return
         step[key] = value
         self.mark_dirty()
-        if 0 <= self.selected < self.listbox.size():
-            keep = self.selected
-            self.refresh_list(keep=keep)
+        # Only the one row's text can have changed, so redraw only that row.
+        # Refreshing the whole list would rebuild the editor and pull the
+        # focus out of whatever the user is typing in.
+        self._refresh_row(self.selected)
 
     # Individual field widgets .........................................
 
@@ -1113,19 +1134,83 @@ class App:
         self.log(f"Saved {target.name}.", "good")
         return True
 
-    def _remember(self, path: Path) -> None:
-        try:
-            STATE_PATH.write_text(json.dumps({"last": str(path)}), encoding="utf-8")
-        except OSError:
-            pass
+    # -- remembering how you left things ---------------------------------
 
-    def _restore_last_sequence(self) -> None:
+    def _read_state(self) -> dict[str, Any]:
         try:
-            last = Path(json.loads(STATE_PATH.read_text(encoding="utf-8"))["last"])
-        except (OSError, ValueError, KeyError):
+            data = json.loads(STATE_PATH.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    def _write_state(self, **changes: Any) -> None:
+        """Merge into the state file, so one setting never clobbers another."""
+        state = self._read_state()
+        state.update(changes)
+        try:
+            STATE_PATH.write_text(json.dumps(state, indent=2), encoding="utf-8")
+        except OSError:
+            pass  # remembering is a convenience, not worth an error dialog
+
+    def _remember(self, path: Path) -> None:
+        self._write_state(last=str(path))
+
+    def save_preferences(self) -> None:
+        self._write_state(
+            dry_run=bool(self.dry_run.get()),
+            minimize_while_running=bool(self.hide_while_running.get()),
+            geometry=self._current_geometry(),
+        )
+
+    def _current_geometry(self) -> str | None:
+        """Size and position, unless minimized or maximized right now."""
+        try:
+            if self.root.state() != "normal":
+                return None
+            return self.root.winfo_geometry()
+        except tk.TclError:
+            return None
+
+    def _restore_preferences(self, state: dict[str, Any]) -> None:
+        if isinstance(state.get("dry_run"), bool):
+            self.dry_run.set(state["dry_run"])
+        if isinstance(state.get("minimize_while_running"), bool):
+            self.hide_while_running.set(state["minimize_while_running"])
+
+        geometry = state.get("geometry")
+        if isinstance(geometry, str) and self._geometry_is_on_screen(geometry):
+            try:
+                self.root.geometry(geometry)
+            except tk.TclError:
+                pass
+
+    def _geometry_is_on_screen(self, geometry: str) -> bool:
+        """Reject a saved position that would open the window where it can't be seen.
+
+        Monitors get unplugged and resolutions change. A window restored to a
+        screen that no longer exists is invisible and feels like a crash.
+        """
+        match = re.fullmatch(r"(\d+)x(\d+)([+-]\d+)([+-]\d+)", geometry)
+        if not match:
+            return False
+        width, height, left, top = (int(part) for part in match.groups())
+        if width < 400 or height < 300:
+            return False
+
+        desktop_left, desktop_top, desktop_w, desktop_h = screen.virtual_bounds()
+        # Require a decent slice of the title bar to land inside the desktop,
+        # which is what you need to be able to grab and move it.
+        visible_x = min(left + width, desktop_left + desktop_w) - max(left, desktop_left)
+        visible_y = min(top + 40, desktop_top + desktop_h) - max(top, desktop_top)
+        return visible_x >= 200 and visible_y >= 20
+
+    def _restore_last_sequence(self, state: dict[str, Any]) -> None:
+        last = state.get("last")
+        if not isinstance(last, str):
             return
-        if last.exists():
-            self._load(last)
+        path = Path(last)
+        if path.exists():
+            self._load(path)
 
     # -- running ---------------------------------------------------------
 
@@ -1196,7 +1281,7 @@ class App:
                 self._handle(event)
         except queue.Empty:
             pass
-        self.root.after(80, self._drain_events)
+        self._drain_job = self.root.after(80, self._drain_events)
 
     def _handle(self, event: dict[str, Any]) -> None:
         kind = event.get("kind")
@@ -1240,6 +1325,12 @@ class App:
                 self.worker.join(timeout=2.0)
         if not self._confirm_discard():
             return
+        self.save_preferences()
+        # Cancel the pending poll, or it fires after the window is gone and
+        # Tk complains about an invalid command.
+        if self._drain_job is not None:
+            self.root.after_cancel(self._drain_job)
+            self._drain_job = None
         self.root.destroy()
 
 

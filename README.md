@@ -70,6 +70,14 @@ pixel to say what you mean.
 `Test this step` runs only the selected step and reports what it found. It is
 the quickest way to tune a match without running everything.
 
+Step names are labels. They appear in the list and in the log and nothing else
+reads them, so rename anything at any time without affecting what it does.
+
+Pixie remembers the Dry run and Minimize settings, the window size and position,
+and which sequence you had open, so she comes back the way you left her. A saved
+position on a monitor that no longer exists is ignored rather than opening the
+window somewhere you cannot see it.
+
 Sequences are saved as JSON in `sequences/`. Captured reference images go in
 `images/`. Neither is committed.
 
