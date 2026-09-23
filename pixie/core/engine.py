@@ -163,7 +163,9 @@ class Sequence:
         """Things that will run but probably aren't what you meant."""
         active = [s for s in self.steps if s.get("enabled", True)]
         if not any(s.get("type") == "section" for s in active):
-            return []
+            # Everything below is about sections, but an indent can be wrong
+            # in a sequence that has none.
+            return self._indent_warnings()
 
         found = []
         if not any(s.get("on_timeout") == "next_section" for s in active):
@@ -185,6 +187,42 @@ class Sequence:
                 where = self.steps[start].get("name") or "the first section"
                 found.append(f"Section '{where}' has no steps switched on. "
                              "Delete the divider, or switch a step back on.")
+
+        found.extend(self._indent_warnings())
+        return found
+
+    def _indent_warnings(self) -> list[str]:
+        """Indents that do not mean what they look like they mean.
+
+        Indenting is a promise that the steps below only run when the check
+        above them finds something. Nothing enforces that on its own, so a
+        check left on the wrong 'if not found' quietly runs its group every
+        time - which looks identical to it working.
+        """
+        found = []
+        for index, step in enumerate(self.steps):
+            if step_defs.indent_of(step) or step.get("type") in step_defs.MARKERS:
+                continue
+            first, after = step_defs.block_of(self.steps, index)
+            guards = step.get("on_timeout") == "skip_block"
+            name = step.get("name") or step.get("type")
+            if after > first and not guards:
+                if not step_defs.can_own_a_block(step):
+                    found.append(
+                        f"'{name}' has {after - first} step(s) indented under "
+                        "it, but it can never fail, so they always run. "
+                        "Un-indent them, or put a check above them.")
+                else:
+                    label = step_defs.ON_TIMEOUT_LABELS["skip_block"]
+                    found.append(
+                        f"'{name}' has {after - first} step(s) indented under "
+                        f"it, but 'If it is not found' is not set to '{label}' "
+                        "- so they run whether it finds anything or not.")
+            elif guards and after == first:
+                found.append(
+                    f"'{name}' is set to skip the steps indented under it, but "
+                    "nothing is indented under it. Indent the steps it should "
+                    "be guarding.")
         return found
 
     def problems(self) -> list[str]:
@@ -882,6 +920,17 @@ class Engine:
             if on_timeout == "continue":
                 self.log("    skipping it, carrying on down this section", "warn")
                 index += 1
+                continue
+            if on_timeout == "skip_block":
+                first, after = step_defs.block_of(self.sequence.steps, index)
+                held = after - first
+                if held:
+                    self.log(f"    not there, so skipping the {held} step(s) "
+                             "indented under it", "warn")
+                else:
+                    self.log("    not there - and nothing is indented under it "
+                             "to skip, so carrying on", "warn")
+                index = after
                 continue
             if on_timeout == "restart":
                 self.log("    back to the very first step of the sequence", "warn")

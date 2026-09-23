@@ -1182,6 +1182,57 @@ def check_image_and_color_previews():
     return problems
 
 
+def check_indenting_steps():
+    """Indent and outdent must work, show, and refuse where it means nothing."""
+    problems = []
+    check = dict(step_defs.new_step("wait_for_image"), name="Is it there")
+    check["on_timeout"] = "skip_block"
+    action = dict(step_defs.new_step("click_box"), name="Do the thing")
+    later = dict(step_defs.new_step("press_key"), name="Afterwards")
+
+    app.sequence = engine_mod.Sequence(name="indents",
+                                       steps=[check, action, later])
+    app.refresh_list(keep=1)
+    root.update()
+
+    # 1. indenting under a check that can fail
+    app.selected = 1
+    app.indent()
+    root.update()
+    if step_defs.indent_of(action) != 1:
+        problems.append("indenting under a check did nothing")
+    if "↳" not in app.listbox.get(1):
+        problems.append(f"an indented step is drawn no differently: "
+                        f"{app.listbox.get(1)!r}")
+
+    # 2. the first step has nothing above it to be guarded by
+    app.selected = 0
+    app.indent()
+    root.update()
+    if step_defs.indent_of(check):
+        problems.append("the first step was indented under nothing")
+
+    # 3. outdent puts it back, leaving no leftover key in the file
+    app.selected = 1
+    app.outdent()
+    root.update()
+    if "indent" in action:
+        problems.append(f"outdent left {action.get('indent')!r} behind")
+
+    # 4. deleting the check must not leave the action looking guarded
+    app.selected = 1
+    app.indent()
+    app.selected = 0
+    app.remove()
+    root.update()
+    if step_defs.indent_of(app.sequence.steps[0]):
+        problems.append("deleting the check left its action still indented")
+
+    print("Indenting ok: indents under a check, refuses at the top, "
+          "un-indents when its check is deleted")
+    return problems
+
+
 def check_add_menu_is_grouped():
     """Add step lists every type under a heading, with a hint on each."""
     problems = []
@@ -1362,7 +1413,8 @@ for check in (check_boxes_can_be_typed_into, check_panes_can_be_dragged,
               check_what_matches_window, check_show_the_click,
               check_testing_a_step_runs_it_once,
               check_window_size_is_remembered,
-              check_settings_stick, check_add_menu_is_grouped):
+              check_settings_stick, check_add_menu_is_grouped,
+              check_indenting_steps):
     try:
         failures.extend(check())
     except Exception as error:  # noqa: BLE001

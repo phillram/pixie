@@ -547,6 +547,8 @@ class App:
         root.bind("<Control-s>", lambda _e: self.save())
         root.bind("<Control-o>", lambda _e: self.open())
         root.bind("<Control-d>", lambda _e: self.duplicate())
+        root.bind("<Control-Right>", lambda _e: self.indent())
+        root.bind("<Control-Left>", lambda _e: self.outdent())
         root.bind("<F5>", lambda _e: self.toggle_run())
         root.bind("<Configure>", self._watch_geometry)
 
@@ -700,8 +702,15 @@ class App:
                          "steps that differ only by their image or their "
                          "position.\nShortcut: Ctrl+D",
             "Remove": "Delete the selected step.",
+            "→": "Indent the selected step under the one above it, so it only "
+                 "runs when that one finds what it is looking for. Set the "
+                 "step above to 'Skip the steps indented under it'.\n"
+                 "Shortcut: Ctrl+Right",
+            "←": "Move the selected step back out, so it always runs.\n"
+                 "Shortcut: Ctrl+Left",
         }
         for label, command in (("↑", self.move_up), ("↓", self.move_down),
+                               ("→", self.indent), ("←", self.outdent),
                                ("Duplicate", self.duplicate), ("Remove", self.remove)):
             button = ttk.Button(buttons, text=label, style="Tool.TButton",
                                 command=command, width=6 if len(label) == 1 else 10)
@@ -870,6 +879,10 @@ class App:
             text = summary
 
         prefix = f"{number:>2}. " if enabled else f"{number:>2}. - "
+        # Indented steps belong to the check above them, so they are drawn
+        # inside it rather than beside it.
+        if step_defs.indent_of(step):
+            prefix = "     ↳ " + prefix
         return prefix + text, None if enabled else theme.DISABLED
 
     def _refresh_row(self, index: int) -> None:
@@ -898,6 +911,11 @@ class App:
 
     def refresh_list(self, keep: int | None = None) -> None:
         selection = keep if keep is not None else self.selected
+        # Every structural edit lands here, which makes it the one place to
+        # repair indents that no longer belong to anything - a check that has
+        # been deleted or moved away leaves its actions indented under
+        # whatever fell above them, which reads as a guarded group and is not.
+        step_defs.normalize_indents(self.sequence.steps)
         self.listbox.delete(0, "end")
         self.lit_section = None  # the rows it was painted on have gone
         numbers = self._numbers()
@@ -1054,6 +1072,38 @@ class App:
         items[at], items[to] = items[to], items[at]
         self.mark_dirty()
         self.refresh_list(keep=to)
+
+    def indent(self) -> None:
+        """Put the selected step under the one above it."""
+        step = self.current_step()
+        if step is None or step_defs.indent_of(step):
+            return
+        above = self.selected - 1
+        while above >= 0 and step_defs.indent_of(self.sequence.steps[above]):
+            above -= 1
+        if above < 0 or not step_defs.can_own_a_block(self.sequence.steps[above]):
+            self.log("There is nothing above this step that could guard it. "
+                     "Indent under a step that looks for something.", "warn")
+            return
+        step["indent"] = 1
+        self.mark_dirty()
+        self.refresh_list()
+
+        owner = self.sequence.steps[above]
+        if owner.get("on_timeout") != "skip_block":
+            label = step_defs.ON_TIMEOUT_LABELS["skip_block"]
+            self.log(f"Indented under '{owner.get('name') or owner['type']}'. "
+                     f"Set that step's 'If it is not found' to '{label}' or "
+                     "this will run whether it finds anything or not.", "warn")
+
+    def outdent(self) -> None:
+        """Take the selected step back out of the group above it."""
+        step = self.current_step()
+        if step is None or not step_defs.indent_of(step):
+            return
+        step.pop("indent", None)
+        self.mark_dirty()
+        self.refresh_list()
 
     def toggle_enabled(self) -> None:
         step = self.current_step()

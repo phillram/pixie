@@ -37,6 +37,12 @@ ON_TIMEOUT_CHOICES: tuple[tuple[str, str, str], ...] = (
      "Skip it and run the next step anyway",
      "Carries on down {section} as though this step had worked. Only safe "
      "when the next step does not depend on this one."),
+    ("skip_block",
+     "Skip the steps indented under it",
+     "Jumps over every step indented under this one and carries on with the "
+     "next step at this level. This is how you make a check guard a group of "
+     "actions: indent them under it, and they only run when it finds what it "
+     "is looking for."),
     ("next_section",
      "Leave this section and start the next one",
      "Stops running {section} and moves on. This is how a section ends: it "
@@ -633,6 +639,81 @@ def display_numbers(steps: list[dict[str, Any]]) -> list[int | None]:
             count += 1
             numbers.append(count)
     return numbers
+
+
+# Indented steps ------------------------------------------------------
+#
+# A step indented under another belongs to it: the one above is a check, and
+# the indented run below it are the actions that check guards. The file stays
+# a flat list -- nesting is one integer per step, not a tree -- because the
+# engine walks the list by index, and a tree would mean rewriting that walk,
+# the list widget, reordering and the save format all at once for something
+# one level deep already expresses.
+#
+# One level only. Two would need a real tree, and nothing so far has wanted it.
+MAX_INDENT = 1
+
+
+def indent_of(step: dict[str, Any]) -> int:
+    """How deeply a step is indented. Absent means not at all."""
+    try:
+        return max(0, min(MAX_INDENT, int(step.get("indent", 0) or 0)))
+    except (TypeError, ValueError):
+        return 0
+
+
+def block_of(steps: list[dict[str, Any]], index: int) -> tuple[int, int]:
+    """The run of steps indented under `index`, as a half-open range.
+
+    Empty (start == end) when nothing is indented under it. Markers count as
+    part of the block if they are indented, so a Note can sit inside one and
+    explain what the group is for.
+    """
+    if indent_of(steps[index]) >= MAX_INDENT:
+        return index + 1, index + 1  # an indented step owns nothing itself
+    end = index + 1
+    while end < len(steps) and indent_of(steps[end]) > 0:
+        end += 1
+    return index + 1, end
+
+
+def can_own_a_block(step: dict[str, Any]) -> bool:
+    """Could steps indented under this one ever be skipped?
+
+    Only a step that can fail has an 'if not found' to say so. Indenting under
+    anything else is decoration: the steps below run either way.
+    """
+    step_type = STEP_TYPES.get(step.get("type", ""))
+    if step_type is None or step.get("type") in MARKERS:
+        return False
+    return any(spec.key == "on_timeout" for spec in step_type.fields)
+
+
+def normalize_indents(steps: list[dict[str, Any]]) -> bool:
+    """Clear indents that no longer belong to anything. True if any changed.
+
+    Deleting a check, or moving one away, would otherwise leave its actions
+    indented under whatever happened to fall above them -- which reads as a
+    group that is guarded when it is not. Called after every structural edit
+    so the list cannot drift into saying something untrue.
+    """
+    changed = False
+    starts = set(section_starts(steps))
+    for index, step in enumerate(steps):
+        if not indent_of(step):
+            continue
+        # Nothing above it in this section, or the thing above cannot guard
+        # anything: there is no owner, so it is not indented.
+        owner = index - 1
+        while owner >= 0 and indent_of(steps[owner]):
+            owner -= 1
+        orphaned = (index in starts or owner < 0
+                    or steps[index - 1].get("type") == "section"
+                    or not can_own_a_block(steps[owner]))
+        if orphaned:
+            step.pop("indent", None)
+            changed = True
+    return changed
 
 
 def section_name(steps: list[dict[str, Any]], index: int) -> str:

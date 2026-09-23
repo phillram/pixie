@@ -103,6 +103,7 @@ def main() -> int:
     failures.extend(_check_numbering())
     failures.extend(_check_section_pause())
     failures.extend(_check_restart_section())
+    failures.extend(_check_a_check_guards_its_indented_steps())
     failures.extend(_check_max_cycles_is_a_real_limit())
     failures.extend(_check_section_limits())
     failures.extend(_check_pick_order())
@@ -291,6 +292,90 @@ def _check_section_pause() -> list[str]:
     print(f"Section pause   : waits {waits} on a two-section handover")
     if 0.7 not in waits:
         problems.append(f"no section pause was waited: {waits}")
+    return problems
+
+
+def _check_a_check_guards_its_indented_steps() -> list[str]:
+    """Steps indented under a check run only when that check finds something.
+
+    The thing this exists for: a target prompt that only sometimes appears,
+    with two or three actions to take when it does. Before this, the only way
+    to express it was to put the actions behind a step whose failure restarted
+    the section - which deadlocks the moment the prompt is what stops the
+    other steps from finding anything.
+    """
+    ran: list[str] = []
+    found = {"check": False}
+
+    class Watching(engine_mod.Engine):
+        def run_step(self, step):
+            tag = step.get("tag", "")
+            ran.append(tag)
+            if tag == "check":
+                return "ok" if found["check"] else "timeout"
+            return "ok"
+
+    def step(tag, indent=0, on_timeout=None):
+        made = {"type": "wait_for_image", "name": tag, "enabled": True,
+                "tag": tag, "image": "x", "pause": [0, 0]}
+        if on_timeout:
+            made["on_timeout"] = on_timeout
+        if indent:
+            made["indent"] = indent
+        return made
+
+    steps = [step("check", on_timeout="skip_block"),
+             step("act one", indent=1),
+             step("act two", indent=1),
+             step("after")]
+    sequence = engine_mod.Sequence(
+        name="guarded", steps=steps,
+        settings=engine_mod.Settings(step_pause_min=0, step_pause_max=0,
+                                     cycle_pause_min=0, cycle_pause_max=0,
+                                     failsafe_corner=False))
+
+    problems = []
+    for present in (False, True):
+        found["check"], ran[:] = present, []
+        Watching(sequence, dry_run=True).run(max_cycles=1)
+        expected = (["check", "act one", "act two", "after"] if present
+                    else ["check", "after"])
+        if ran != expected:
+            problems.append(f"with the check {'finding' if present else 'failing'}"
+                            f", it ran {ran}, expected {expected}")
+    print(f"Guarded steps   : check fails -> {['check', 'after']}, "
+          f"check finds -> ran all 4")
+
+    # The block is whatever is indented, so it ends where the indenting does.
+    if step_defs.block_of(steps, 0) != (1, 3):
+        problems.append(f"the block under the check is "
+                        f"{step_defs.block_of(steps, 0)}, expected (1, 3)")
+    # An indented step owns nothing itself - one level, not a tree.
+    if step_defs.block_of(steps, 1) != (2, 2):
+        problems.append("an indented step claimed a block of its own")
+
+    # An indent with nothing above it to guard it is not an indent. This is
+    # what stops a deleted check leaving its actions looking conditional.
+    orphan = [step("act one", indent=1), step("after")]
+    if not step_defs.normalize_indents(orphan) or step_defs.indent_of(orphan[0]):
+        problems.append("an indent with nothing above it survived")
+    # Nor can a step that cannot fail own a block.
+    under_click = [{"type": "click_box", "name": "c", "enabled": True},
+                   step("act one", indent=1)]
+    if not step_defs.normalize_indents(under_click):
+        problems.append("a step indented under something that cannot fail "
+                        "was left alone")
+
+    # And the validator says so before a run rather than after one.
+    said = engine_mod.Sequence(name="x", steps=[
+        step("check", on_timeout="restart"), step("act one", indent=1)]).warnings()
+    if not any("whether it finds anything or not" in line for line in said):
+        problems.append(f"indenting under a check that cannot skip drew no "
+                        f"warning: {said}")
+    said = engine_mod.Sequence(name="x", steps=[
+        step("check", on_timeout="skip_block"), step("after")]).warnings()
+    if not any("nothing is indented under it" in line for line in said):
+        problems.append(f"a check set to skip nothing drew no warning: {said}")
     return problems
 
 

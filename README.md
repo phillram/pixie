@@ -21,6 +21,8 @@ Windows only. Dark themed.
 * Wait for things, with a timeout or indefinitely
 * Group steps into sections, one per screen, each repeating until its start
   condition stops matching
+* Indent steps under a check, so a group of actions only runs when that check
+  finds what it is looking for
 
 Every pause can be a range rather than a fixed number, so the timing varies.
 Steps, sections and whole cycles each get their own, so you can have a delay
@@ -215,6 +217,7 @@ Pixie sits doing nothing:
 | Go back to the very first step of the sequence | The whole script starts again. Everything before this step runs a second time |
 | Go back to the first step of this section | Only this section starts again. No other section is touched |
 | Skip it and run the next step anyway | Runs the next step as though this one had worked |
+| Skip the steps indented under it | Jumps the whole group below it. See Checks that guard a group |
 | Leave this section and start the next one | This is how a section ends |
 | Stop the run completely | Same as pressing Stop |
 
@@ -230,6 +233,51 @@ Go back to the first step of this section
     Starts 'In Game' again from its own step 1, and does not touch any other
     section.
 ```
+
+### Checks that guard a group
+
+Select a step and press **→** (or Ctrl+Right) to indent it under the step
+above. The step above is then a check, and the indented run below it only
+runs when that check finds what it is looking for:
+
+```
+ 1. Look for card back
+ 2. Is a target wanted?          If it is not found: skip the steps indented under it
+     ↳ 3. Click on myself
+     ↳ 4. Wait a moment
+ 5. Select playable card
+```
+
+If step 2 finds nothing, 3 and 4 are skipped and the sequence carries on at 5.
+If it does find something, they run in order. **←** (Ctrl+Left) takes a step
+back out.
+
+This is for the thing that only sometimes happens and needs more than one
+action when it does. `Click a color if it appears` already covers the case
+where the only action is a single click; indenting is what you want when it is
+two clicks, or a click and a pause, or a click and a keystroke.
+
+Without it, the only way to express "sometimes" was to put the actions behind
+a step set to restart the section - which deadlocks the moment the thing being
+waited for is itself what stops the other steps from finding anything. A
+targeting prompt does exactly that: while it is up, no card in hand is
+playable, so a card check placed above it restarts the section forever and the
+step that would clear the prompt is never reached.
+
+Pixie checks the two halves agree, because an indent that is not actually
+guarding anything looks identical to one that is:
+
+```
+'Is a target wanted?' has 2 step(s) indented under it, but 'If it is not
+found' is not set to 'Skip the steps indented under it' - so they run
+whether it finds anything or not.
+```
+
+Delete or move a check and its group un-indents itself, rather than being left
+looking conditional under whatever fell above it.
+
+One level deep, deliberately. The file stays a flat list with one number per
+step, so reordering, sections and the save format are all untouched by it.
 
 `Give up after` is the timeout, and it is the setting that decides how long
 Pixie sits doing nothing. It defaults to 30 seconds on a step that waits for
