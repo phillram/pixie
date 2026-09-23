@@ -373,6 +373,7 @@ class App:
         root.protocol("WM_DELETE_WINDOW", self.on_close)
         root.bind("<Control-s>", lambda _e: self.save())
         root.bind("<Control-o>", lambda _e: self.open())
+        root.bind("<Control-d>", lambda _e: self.duplicate())
         root.bind("<F5>", lambda _e: self.toggle_run())
 
         state = self._read_state()
@@ -508,13 +509,16 @@ class App:
         step_tips = {
             "↑": "Move the selected step up.",
             "↓": "Move the selected step down.",
-            "Copy": "Duplicate the selected step, settings and all.",
+            "Duplicate": "Copy the selected step, settings and all, and drop the "
+                         "copy underneath it. The quickest way to build several "
+                         "steps that differ only by their image or their "
+                         "position.\nShortcut: Ctrl+D",
             "Remove": "Delete the selected step.",
         }
         for label, command in (("↑", self.move_up), ("↓", self.move_down),
-                               ("Copy", self.duplicate), ("Remove", self.remove)):
+                               ("Duplicate", self.duplicate), ("Remove", self.remove)):
             button = ttk.Button(buttons, text=label, style="Tool.TButton",
-                                command=command, width=6 if len(label) == 1 else 8)
+                                command=command, width=6 if len(label) == 1 else 10)
             button.pack(side="left", padx=(6, 0))
             theme.tip(button, step_tips[label])
 
@@ -553,11 +557,30 @@ class App:
 
         self.editor = ttk.Frame(self.canvas, style="Panel.TFrame", padding=16)
         self.editor_window = self.canvas.create_window((0, 0), window=self.editor, anchor="nw")
-        self.editor.bind("<Configure>",
-                         lambda _e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
-        self.canvas.bind("<Configure>",
-                         lambda e: self.canvas.itemconfigure(self.editor_window, width=e.width))
+        self.editor.bind("<Configure>", lambda _e: self._fit_editor())
+        self.canvas.bind("<Configure>", self._on_canvas_resize)
         self.canvas.bind_all("<MouseWheel>", self._on_wheel)
+
+    def _on_canvas_resize(self, event: tk.Event) -> None:
+        self.canvas.itemconfigure(self.editor_window, width=event.width)
+        self._fit_editor()
+
+    def _fit_editor(self) -> None:
+        """Keep the scroll region at least as tall as the canvas itself.
+
+        A Tk canvas lets you scroll up until the bottom of its scroll region
+        reaches the bottom of the widget. When a short step leaves the region
+        shorter than the canvas, that is an invitation to scroll the editor
+        down into a band of empty space -- and the scrollbar goes on claiming
+        the whole thing is in view, so it looks like a glitch rather than a
+        scroll position. Padding the region to the full height means there is
+        nothing above the editor to scroll into.
+        """
+        region = self.canvas.bbox("all")
+        if region is None:
+            return
+        self.canvas.configure(
+            scrollregion=(0, 0, region[2], max(region[3], self.canvas.winfo_height())))
 
     def _build_log(self) -> None:
         pane = ttk.Frame(self.root, padding=(12, 10, 12, 12))
@@ -711,13 +734,26 @@ class App:
         self.log(f"Added {step_defs.location(self.sequence.steps, at)}", "muted")
 
     def duplicate(self) -> None:
+        """Copy the selected step and select the copy, ready to be changed."""
         step = self.current_step()
         if step is None:
             return
+        copied = json.loads(json.dumps(step))  # deep: regions and colors are lists
+
+        # Two rows reading exactly the same thing are impossible to tell apart.
+        # Only worth marking a name you chose yourself; a default one already
+        # repeats all over the list.
+        step_type = step_defs.STEP_TYPES.get(copied.get("type", ""))
+        name = str(copied.get("name") or "").strip()
+        if name and (step_type is None or name != step_type.label):
+            copied["name"] = f"{name} copy"
+
         at = self.selected + 1
-        self.sequence.steps.insert(at, json.loads(json.dumps(step)))
+        self.sequence.steps.insert(at, copied)
         self.mark_dirty()
         self.refresh_list(keep=at)
+        self.log(f"Duplicated {step_defs.location(self.sequence.steps, at)}. "
+                 "Change its image or position to suit.", "muted")
 
     def remove(self) -> None:
         step = self.current_step()
@@ -757,6 +793,9 @@ class App:
         for child in self.editor.winfo_children():
             child.destroy()
         self.field_vars.clear()
+        # Start each step at its top, rather than wherever you had scrolled
+        # the last one to.
+        self.canvas.yview_moveto(0)
 
         step = self.current_step()
         if step is None:

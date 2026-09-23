@@ -411,6 +411,151 @@ def check_start_stop_hotkey():
     return problems
 
 
+def check_editor_cannot_scroll_into_nothing():
+    """A step shorter than the editor pane must sit at the top and stay there.
+
+    Tk lets you scroll a canvas up until the bottom of its scroll region
+    reaches the bottom of the widget, so a short step used to scroll down into
+    a band of empty space -- while the scrollbar went on reporting the whole
+    thing was in view.
+    """
+    problems = []
+    root.deiconify()
+    root.geometry("1180x1300+40+0")   # tall, so short steps leave room to spare
+    root.update()
+
+    app.sequence = engine_mod.Sequence(
+        name="scrolling", steps=[step_defs.new_step("click_box"),
+                                 step_defs.new_step("click_image"),
+                                 step_defs.new_step("click_image")])
+    app.refresh_list(keep=0)
+    app.selected = 0
+    app.build_editor()
+    root.update()
+
+    canvas = app.canvas
+    content = canvas.bbox("all")[3]
+    if content >= canvas.winfo_height():
+        print("Editor scroll  : SKIPPED (the window is too short to test it)")
+        root.withdraw()
+        return problems
+
+    for _ in range(40):
+        canvas.yview_scroll(-1, "units")
+    root.update()
+    above = -canvas.canvasy(0)
+    if above > 1:
+        problems.append(f"scrolling up on a short step opened {above:.0f}px of "
+                        "empty space above it")
+
+    print(f"Editor scroll ok: {content}px of content in a "
+          f"{canvas.winfo_height()}px pane stays at the top")
+
+    # Scrolling down one step and then picking another must start the new one
+    # at its top. Both steps here are taller than the pane, so the view is
+    # free to stay where it was if nothing moves it back.
+    root.geometry("1180x700+40+40")
+    root.update()
+    app.selected = 1
+    app.build_editor()
+    root.update()
+    if canvas.bbox("all")[3] <= canvas.winfo_height():
+        print("  (scroll position not checked: no step is taller than the pane)")
+        root.withdraw()
+        return problems
+    canvas.yview_moveto(0.5)
+    root.update()
+    scrolled = canvas.canvasy(0)
+    app.selected = 2
+    app.build_editor()
+    root.update()
+    if canvas.canvasy(0) != 0:
+        problems.append(f"selecting a step left the editor scrolled to "
+                        f"{canvas.canvasy(0)}, expected the top")
+    else:
+        print(f"  scrolled to {scrolled:.0f}px, then back to the top on the "
+              "next step")
+    root.withdraw()
+    return problems
+
+
+def check_duplicate_step():
+    """Duplicating copies everything, names the copy apart, and selects it."""
+    problems = []
+    original = step_defs.new_step("click_image")
+    original["name"] = "Handle burst lightning"
+    original["image"] = "images/burst.png"
+    original["region"] = [10, 20, 300, 400]
+    plain = step_defs.new_step("press_key")
+
+    app.sequence = engine_mod.Sequence(name="dupes", steps=[original, plain])
+    app.refresh_list(keep=0)
+    app.selected = 0
+    root.update()
+    app.duplicate()
+    root.update()
+
+    if len(app.sequence.steps) != 3:
+        problems.append(f"duplicate left {len(app.sequence.steps)} steps, expected 3")
+        return problems
+
+    copy = app.sequence.steps[1]
+    if copy["image"] != original["image"] or copy["region"] != original["region"]:
+        problems.append("the copy did not keep the original's settings")
+    if copy["region"] is original["region"]:
+        problems.append("the copy shares its region with the original - editing "
+                        "one would change both")
+    if copy["name"] != "Handle burst lightning copy":
+        problems.append(f"the copy is named {copy['name']!r}, which does not "
+                        "tell it apart from the original")
+    if app.selected != 1:
+        problems.append(f"the copy was not selected (selection is {app.selected})")
+
+    # A step still on its default name gains nothing from being marked.
+    app.selected = 2
+    app.duplicate()
+    root.update()
+    if app.sequence.steps[3]["name"] != plain["name"]:
+        problems.append(f"a default name was marked up: "
+                        f"{app.sequence.steps[3]['name']!r}")
+
+    # Ctrl+D duplicates from anywhere, including a text field -- where Tk's
+    # own Ctrl+D would otherwise eat the character ahead of the caret.
+    from tkinter import ttk
+
+    root.deiconify()
+    root.geometry("1100x760+30+30")
+    root.update()
+    root.focus_force()
+    app.selected = 0
+    app.build_editor()
+    root.update()
+    name_var = app.field_vars["name"]
+    entry = next((w for w in _descendants(app.editor)
+                  if isinstance(w, ttk.Entry)
+                  and str(w.cget("textvariable")) == str(name_var)), None)
+    if entry is not None:
+        entry.focus_set()
+        entry.icursor(0)
+        root.update()
+        if root.focus_get() is entry:
+            before = len(app.sequence.steps)
+            was = name_var.get()
+            entry.event_generate("<Control-d>")
+            root.update()
+            if len(app.sequence.steps) != before + 1:
+                problems.append("Ctrl+D did not duplicate the step")
+            if name_var.get() != was:
+                problems.append(f"Ctrl+D ate a character: {was!r} -> "
+                                f"{name_var.get()!r}")
+        else:
+            print("  (Ctrl+D not checked: the entry could not take focus)")
+    root.withdraw()
+
+    print("Duplicate ok: settings copied, copy named apart, selected, Ctrl+D works")
+    return problems
+
+
 def check_image_and_color_previews():
     """An image step shows the picture; a color step shows the color."""
     import cv2
@@ -589,6 +734,16 @@ try:
     failures.extend(check_start_stop_hotkey())
 except Exception as error:  # noqa: BLE001
     failures.append(f"hotkey check: {error!r}")
+
+try:
+    failures.extend(check_editor_cannot_scroll_into_nothing())
+except Exception as error:  # noqa: BLE001
+    failures.append(f"editor scrolling check: {error!r}")
+
+try:
+    failures.extend(check_duplicate_step())
+except Exception as error:  # noqa: BLE001
+    failures.append(f"duplicate check: {error!r}")
 
 try:
     failures.extend(check_image_and_color_previews())

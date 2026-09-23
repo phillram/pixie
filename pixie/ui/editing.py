@@ -178,3 +178,9 @@ def install(root: tk.Misc) -> None:
             root.bind_class(name, sequence, on_entry)
         for name in TEXT_CLASSES:
             root.bind_class(name, sequence, on_text)
+
+    # Tk binds Ctrl+D to "delete the character ahead", an emacs habit no
+    # Windows application has. Replace it with a handler that does nothing and
+    # does not swallow the event, so the window's own Ctrl+D still fires.
+    for name in ENTRY_CLASSES + TEXT_CLASSES:
+        root.bind_class(name, "<Control-d>", lambda _event: None)

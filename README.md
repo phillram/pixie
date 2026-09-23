@@ -73,6 +73,12 @@ pixel to say what you mean.
 `Test this step` runs only the selected step and reports what it found. It is
 the quickest way to tune a match without running everything.
 
+`Duplicate`, or Ctrl+D, copies the selected step with all its settings and
+drops the copy underneath. It is the fast way to build several steps that
+differ only by their image or their position: duplicate, then recapture. A
+recapture always writes a new file, so it never overwrites the image the
+original is using.
+
 Image and color fields show you what they hold. An image step displays the
 picture it captured along with its size in pixels, and tells you plainly if the
 file has gone missing. A color field shows a filled swatch and the hex value
@@ -101,6 +107,7 @@ Every box you can type in takes the editing keys you would expect:
 | Ctrl+Backspace, Shift+Backspace | Delete the word before the caret |
 | Ctrl+Delete | Delete the word after it |
 | Ctrl+A | Select everything in the box |
+| Ctrl+D | Duplicate the selected step, even from inside a field |
 
 Tk, which Pixie's window is built on, leaves these out and binds Ctrl+A to
 "go to the start of the line" instead. Shift+Delete is left alone, because it
