@@ -428,6 +428,26 @@ def show_matches(parent: tk.Misc, picture, kept, dropped,
             if hit.clipped:
                 lines.append((f"      runs off the {hit.clipped} of the search "
                               "area, so it is cut off - widen the area", "warn"))
+        # Backgrounds are full of things the same color as the thing you
+        # want, but hardly ever the same shape. When the sizes fall into two
+        # clear groups, say which setting separates them: the numbers are
+        # right there in the list, but reading a filter out of them is a leap.
+        split = screen.suggest_size_filter([hit for hit, _ in kept])
+        if split is not None:
+            # Name the setting exactly as the editor labels it, read from the
+            # step type, so the advice cannot start pointing at a field that
+            # has since been renamed.
+            step_type = step_defs.STEP_TYPES.get(step.get("type", ""))
+            setting = next((f.label for f in (step_type.fields if step_type else ())
+                            if f.key == f"min_{split.field}"), f"min_{split.field}")
+            lines.append(("", "muted"))
+            lines.append((
+                f"These split into two groups by {split.field}: "
+                f"{split.drops} up to {split.largest_dropped}px and "
+                f"{split.keeps} from {split.smallest_kept}px. Setting "
+                f"'{setting}' to {split.value} would keep the "
+                f"{split.keeps} bigger and drop the {split.drops} smaller.",
+                "good"))
     else:
         lines.append(("Nothing would be used.", "warn"))
     if dropped:

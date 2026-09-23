@@ -112,6 +112,7 @@ def main() -> int:
     failures.extend(_check_edges_follow_the_shape())
     failures.extend(_check_a_mostly_hidden_outline())
     failures.extend(_check_a_speck_swept_up_by_the_join())
+    failures.extend(_check_the_shape_split_is_suggested())
     failures.extend(_check_a_section_with_nothing_switched_on())
     failures.extend(_check_every_wait_respects_the_cap())
     failures.extend(_check_declared_defaults())
@@ -826,6 +827,49 @@ def _check_a_mostly_hidden_outline() -> list[str]:
     if any(piece.height >= 90 for piece in in_pieces):
         print(f"                  (tallest loose piece "
               f"{max(p.height for p in in_pieces)}px)")
+    return problems
+
+
+def _check_the_shape_split_is_suggested() -> list[str]:
+    """Patches of two clear shapes must point at the setting that splits them.
+
+    A background is full of things the same color as the thing you want -- a
+    lit beam, a rim light, a glowing prop -- but hardly ever the same shape.
+    These are the real sizes from one hand of cards: two slivers of a lit beam
+    running down the background, and the cards themselves.
+    """
+    from pixie.system import screen as screen_mod
+
+    def hit(width, height):
+        return screen_mod.ColorHit(0, 0, 0, 0, width, height, width * height)
+
+    beams_and_cards = [hit(45, 306), hit(776, 306), hit(31, 188)]
+    split = screen_mod.suggest_size_filter(beams_and_cards)
+
+    problems = []
+    if split is None:
+        return ["45px beams next to 776px cards produced no advice at all"]
+    print(f"Shape split     : {split.drops} up to {split.largest_dropped}px "
+          f"and {split.keeps} from {split.smallest_kept}px -> min "
+          f"{split.field} {split.value}")
+    if split.field != "width":
+        problems.append(f"split by {split.field}, but the beams and the cards "
+                        "are the same height - width is the one that separates them")
+    if not 45 < split.value < 776:
+        problems.append(f"a minimum width of {split.value} does not sit "
+                        "between the two groups")
+    if (split.keeps, split.drops) != (1, 2):
+        problems.append(f"keeps {split.keeps} and drops {split.drops}, "
+                        "expected to keep the 1 card and drop the 2 beams")
+
+    # Patches that are all much of a muchness have no split to offer, and
+    # inventing one would send you off tuning a filter that cannot help.
+    if screen_mod.suggest_size_filter([hit(480, 300), hit(486, 290),
+                                       hit(470, 305)]) is not None:
+        problems.append("three cards of the same size were said to fall into "
+                        "two groups")
+    if screen_mod.suggest_size_filter([hit(45, 306)]) is not None:
+        problems.append("a single patch was split into two groups")
     return problems
 
 

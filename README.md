@@ -373,6 +373,35 @@ test where a washed-out streak crosses a card outline:
 the same hue is usually washed out towards white or grey. `Min saturation`
 throws away the washed-out pixels before anything else happens.
 
+### When the background is the same color *and* just as vivid
+
+Saturation cannot help when the background thing genuinely glows - a lit beam,
+a rim light, a neon sign. But a beam is not shaped like the thing you want. A
+card highlight is as wide as a card; a beam behind it is a sliver:
+
+```
+  1. 45x306 at 1170, 1853    3092 pixels
+  2. 776x306 at 1529, 1853  10357 pixels
+  3. 31x188 at 2638, 1971    3985 pixels
+```
+
+Same hue, same saturation, same height - and 45px wide against 776px. So
+**What matches?** looks for that split and names the setting that acts on it:
+
+```
+These split into two groups by width: 2 up to 45px and 1 from 776px.
+Setting 'Patch at least this wide (px)' to 187 would keep the 1 bigger
+and drop the 2 smaller.
+```
+
+It only says this when the sizes really do fall into two groups. Patches all
+much of a muchness get no advice, because there is none worth giving.
+
+`Patch at least this wide` and `Patch at least this tall` are checked *after*
+joining, so they judge the whole assembled shape. That is what makes them
+work against a background: a beam stays a sliver however many pieces it is
+joined from.
+
 ### Sampling a color properly
 
 One pixel is a poor sample of a glow. Its edges are washed out and its middle

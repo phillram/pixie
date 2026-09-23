@@ -8,6 +8,7 @@ which give negative coordinates).
 from __future__ import annotations
 
 import ctypes
+import math
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -486,6 +487,54 @@ def suggest_color(patch: np.ndarray) -> ColorAdvice | None:
     return ColorAdvice(rgb, tolerance, min_saturation, min_brightness,
                        dominant * 2, share, matched,
                        patch.shape[0] * patch.shape[1], matched > by_rgb)
+
+
+@dataclass(frozen=True)
+class SizeSplit:
+    """A minimum size that separates matched patches into two clear groups."""
+
+    field: str            # "width" or "height"
+    value: int            # what to set the minimum to
+    keeps: int            # patches at or above it
+    drops: int            # patches below it
+    smallest_kept: int
+    largest_dropped: int
+
+
+def suggest_size_filter(hits: list[ColorHit]) -> SizeSplit | None:
+    """A minimum width or height that would drop the odd ones out.
+
+    Backgrounds are full of things the same color as the thing you want: a lit
+    beam, a glowing prop, a rim light. What they are almost never is the same
+    *shape*. A card's highlight is as wide as a card; a beam behind it is a
+    sliver. The numbers are already sitting in the What matches? list, but
+    reading a filter out of them is a leap, so this does it.
+
+    Returns None unless the sizes really do fall into two groups -- there is
+    no useful advice to give about a set of patches that are all much of a
+    muchness, and inventing some would only mislead.
+    """
+    if len(hits) < 2:
+        return None
+
+    best: SizeSplit | None = None
+    best_ratio = 2.5  # below this the two groups are not distinct enough
+    for field in ("width", "height"):
+        sizes = sorted({getattr(hit, field) for hit in hits})
+        if len(sizes) < 2:
+            continue
+        for below, above in zip(sizes, sizes[1:]):
+            ratio = above / max(1, below)
+            if ratio <= best_ratio:
+                continue
+            # Sit the threshold between the groups rather than up against
+            # either, so a patch a little off its usual size still passes.
+            value = int(round(math.sqrt(below * above)))
+            kept = [h for h in hits if getattr(h, field) >= value]
+            best_ratio = ratio
+            best = SizeSplit(field, value, len(kept), len(hits) - len(kept),
+                             above, below)
+    return best
 
 
 def picture_around(x: int, y: int, width: int = 900,

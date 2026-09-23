@@ -859,6 +859,16 @@ def check_what_matches_window():
         if "cut off" not in text:
             problems.append("a patch running off the edge was not flagged as "
                             f"cut off: {text!r}")
+        # The 40px sliver and the 300px outline are two clear shapes, so the
+        # report has to name the setting that tells them apart, spelled the
+        # way the editor spells it.
+        advice = [line for line in text.splitlines() if "split into two" in line]
+        if not advice:
+            problems.append(f"two very different shapes drew no advice: {text!r}")
+        elif "Patch at least this wide (px)" not in advice[0]:
+            problems.append(f"the advice does not name the real setting: {advice[0]!r}")
+        else:
+            print("  " + advice[0].strip())
         print("What matches ok: " + text.strip().splitlines()[1].strip()[:70])
         viewer.window.destroy()
     finally:
