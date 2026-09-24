@@ -136,6 +136,7 @@ def main() -> int:
     failures.extend(_check_how_often_it_looks())
     failures.extend(_check_repeats_are_not_metronomic())
     failures.extend(_check_every_delay_around_a_press_varies())
+    failures.extend(_check_the_cursor_travels_to_a_click())
     failures.extend(_check_cursor_travel_scales_with_distance())
     failures.extend(_check_nothing_grows_forever_during_a_run())
     failures.extend(_check_a_bad_stop_key_does_not_kill_the_run())
@@ -2350,6 +2351,66 @@ def _check_every_delay_around_a_press_varies() -> list[str]:
 
     print(f"Press timing    : arrive {[round(v) for v in arrivals[:4]]}ms, "
           f"held {[round(v) for v in holds[:4]]}ms, none repeated")
+    return problems
+
+
+def _check_the_cursor_travels_to_a_click() -> list[str]:
+    """Gliding has to cover the journey in, not only the journey out.
+
+    It was a parking setting, so the cursor crossed the screen smoothly on its
+    way away from a click and teleported on its way to one. The approach is
+    the half an application watches: a hover state opens because the pointer
+    arrived over something, and it cannot arrive over anything it skipped.
+    """
+    from pixie.system import mouse as mouse_mod
+
+    problems = []
+    visited: list[tuple[int, int]] = []
+    real_move, real_send, real_pos = (mouse_mod.move_to, mouse_mod._send,
+                                      mouse_mod.position)
+    mouse_mod.move_to = lambda x, y: visited.append((x, y))
+    mouse_mod._send = lambda *_a, **_k: None
+    mouse_mod.position = lambda: visited[-1] if visited else (0, 0)
+
+    def clicks_from(there: tuple[int, int]) -> list[tuple[int, int]]:
+        visited.clear()
+        visited.append((0, 0))
+        runner._click(there[0], there[1], {"type": "click_point"}, "a thing")
+        return visited[1:]
+
+    try:
+        sequence = engine_mod.Sequence(
+            name="travel", settings=engine_mod.Settings(glide=False,
+                                                        park_mouse="off"))
+        runner = engine_mod.Engine(sequence, dry_run=False)
+        warped = clicks_from((900, 600))
+
+        sequence.settings.glide = True
+        glided = clicks_from((900, 600))
+    finally:
+        (mouse_mod.move_to, mouse_mod._send,
+         mouse_mod.position) = real_move, real_send, real_pos
+
+    if len(warped) != 1:
+        problems.append(f"with gliding off a click took {len(warped)} moves, "
+                        "expected one straight there")
+    if len(glided) < 8:
+        problems.append(f"with gliding on a click still took only "
+                        f"{len(glided)} moves, so it is warping to the target")
+    if glided and glided[-1] != (900, 600):
+        problems.append(f"a glided click finished at {glided[-1]}, not on the "
+                        "target")
+    # It has to actually pass over the ground between, not jump most of it.
+    if glided and any(point == (900, 600) for point in glided[:len(glided) // 2]):
+        problems.append("the glide arrived in its first half, so it is not "
+                        "crossing the distance")
+
+    older = engine_mod.Settings.from_dict({"park_glide": True})
+    if not older.glide:
+        problems.append("a sequence that had gliding on lost it in the rename")
+
+    print(f"Travel to click : warping {len(warped)} move, gliding "
+          f"{len(glided)} moves, arriving on the target")
     return problems
 
 

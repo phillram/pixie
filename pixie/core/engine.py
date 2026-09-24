@@ -105,7 +105,9 @@ class Settings:
     park_box: list[int] | None = None
     # Travel there rather than appearing there. An application that tracks
     # hover never sees a warped cursor cross anything.
-    park_glide: bool = False
+    # Travel to a point rather than appearing at it, both on the way to a
+    # click and on the way to the parking spot.
+    glide: bool = False
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> "Settings":
@@ -133,6 +135,11 @@ class Settings:
             if point:
                 data["park_box"] = [int(point[0]), int(point[1]), 1, 1]
         data.pop("park_point", None)
+        # Gliding used to apply only to parking. It covers the journey to a
+        # click as well now, under a name that no longer says otherwise.
+        if "park_glide" in data and "glide" not in data:
+            data["glide"] = data.pop("park_glide")
+        data.pop("park_glide", None)
 
         known = {f: data[f] for f in cls.__dataclass_fields__ if f in data}
         return cls(**known)
@@ -502,7 +509,8 @@ class Engine:
             mouse.click(x, y, button=button, clicks=clicks,
                         interval=self._repeat_gap(step),
                         before=self._settle_before(),
-                        hold=self._press_hold(step))
+                        hold=self._press_hold(step),
+                        travel=self._travel_to(x, y))
 
     # -- step handlers ---------------------------------------------------
 
@@ -1061,6 +1069,12 @@ class Engine:
         low, high = settings.press_settle_min, settings.press_settle_max
         return lambda: _between(low, high)
 
+    def _travel_to(self, to_x: int, to_y: int) -> float | None:
+        """How long to take reaching a point, or None to appear there."""
+        if not self.sequence.settings.glide:
+            return None
+        return self._travel_time(to_x, to_y)
+
     def _travel_time(self, to_x: int, to_y: int) -> float:
         """How long the cursor should take to reach a point.
 
@@ -1093,7 +1107,7 @@ class Engine:
 
     def _park_description(self) -> str:
         """Where the cursor goes and how, in words, for the opening log line."""
-        how = "moves" if self.sequence.settings.park_glide else "returns"
+        how = "moves" if self.sequence.settings.glide else "returns"
         settings = self.sequence.settings
         if settings.park_mouse == "center":
             x, y = screen.primary_center()
@@ -1110,7 +1124,7 @@ class Engine:
         target = self._park_target()
         if target is None or self.dry_run:
             return
-        if self.sequence.settings.park_glide:
+        if self.sequence.settings.glide:
             mouse.glide_to(*target, seconds=self._travel_time(*target))
         else:
             mouse.move_to(*target)

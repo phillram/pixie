@@ -1088,7 +1088,7 @@ def check_settings_stick():
         def run(self):
             self.settings.park_mouse = "custom"
             self.settings.park_box = [1234, 567, 40, 20]
-            self.settings.park_glide = True
+            self.settings.glide = True
             return True
 
     gui.SettingsDialog = FakeDialog
@@ -1107,7 +1107,7 @@ def check_settings_stick():
         if reloaded.settings.park_box != [1234, 567, 40, 20]:
             problems.append(f"the parked spot came back as "
                             f"{reloaded.settings.park_box}")
-        if not reloaded.settings.park_glide:
+        if not reloaded.settings.glide:
             problems.append("the glide setting did not survive a save")
         if app.dirty:
             problems.append("the sequence was left unsaved after saving settings")

@@ -353,14 +353,16 @@ class SettingsDialog:
                                        sticky="w", pady=(0, 10))
         row += 1
 
-        self.glide_var = tk.BooleanVar(value=settings.park_glide)
-        ttk.Checkbutton(frame, text="Move the cursor there rather than warping it",
+        self.glide_var = tk.BooleanVar(value=settings.glide)
+        ttk.Checkbutton(frame, text="Move the cursor rather than warping it",
                         variable=self.glide_var).grid(row=row, column=0, columnspan=2,
                                                       sticky="w")
         row += 1
-        ttk.Label(frame, text="A warped cursor is somewhere, then somewhere else, "
-                              "having crossed nothing in between. Moving passes over "
-                              "what is in the way, at the speed set above.",
+        ttk.Label(frame, text="Applies to the journey to a click as well as the "
+                              "one away from it, at the speed set above. A warped "
+                              "cursor is somewhere, then somewhere else, having "
+                              "crossed nothing in between; an application watching "
+                              "the pointer never sees it approach.",
                   style="Muted.TLabel", wraplength=int(440 * scale),
                   justify="left").grid(row=row, column=0, columnspan=2,
                                        sticky="w", pady=(0, 10))
@@ -458,7 +460,7 @@ class SettingsDialog:
         self.settings.park_mouse = PARK_MODES.get(self.park_var.get(),
                                                   self.settings.park_mouse)
         self.settings.park_box = self.park_area
-        self.settings.park_glide = bool(self.glide_var.get())
+        self.settings.glide = bool(self.glide_var.get())
         if self.settings.park_mouse == "custom" and not self.park_area:
             messagebox.showwarning(
                 "No area picked",

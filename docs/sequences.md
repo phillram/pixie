@@ -309,14 +309,16 @@ if you left it alone.
 
 ## The cursor
 
-`After each step` sends the cursor somewhere harmless so it cannot sit over the
-next thing Pixie looks at. Two settings:
+**Move the cursor rather than warping it** covers every journey the cursor
+makes: to a click, and away to the parking spot afterwards. It travels at
+`Cursor travel speed`, eased at both ends. A speed rather than a duration, so
+a long move takes longer than a short one, capped at 0.8 seconds however far
+it goes. Off, the cursor appears at each target instead.
 
-* **Pick area...** drags a box instead of one spot, and the cursor lands
-  somewhere different inside it every time.
-* **Move the cursor there rather than warping it** travels at `Cursor travel
-  speed`, eased at both ends. A speed rather than a duration, so a long move
-  takes longer than a short one; capped at 0.8 seconds however far it goes.
+`After each step` sends the cursor somewhere harmless once a click is done, so
+it cannot sit over the next thing Pixie looks at. **Pick area...** drags a box
+instead of one spot, and the cursor lands somewhere different inside it every
+time.
 
 Movement is sent as genuine input, the same way clicks are. A warped cursor
 generates no input at all, so a game never learns the pointer moved and carries

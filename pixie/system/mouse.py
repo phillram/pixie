@@ -162,8 +162,14 @@ def click(
     interval: float | Callable[[], float] = 0.06,
     before: float | Callable[[], float] = 0.05,
     hold: float | Callable[[], float] = 0.02,
+    travel: float | None = None,
 ) -> None:
     """Move to (x, y) and click.
+
+    `travel` is how long to take getting there. None warps, which is instant
+    and generates one movement event; a number glides, passing over whatever
+    lies between. An application that watches the pointer sees the approach
+    either way, but only a glide looks like an approach.
 
     Three delays, any of which may be a function so that no two clicks are
     timed alike:
@@ -183,7 +189,10 @@ def click(
     if button not in _BUTTONS:
         raise ValueError(f"Unknown button {button!r}. Use left, right or middle.")
 
-    move_to(x, y)
+    if travel:
+        glide_to(x, y, seconds=travel)
+    else:
+        move_to(x, y)
     time.sleep(_moment(before))
     down, up = _BUTTONS[button]
     for n in range(clicks):
