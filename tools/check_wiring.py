@@ -152,12 +152,184 @@ def main() -> int:
         if name not in steps.COLOR_MATCH:
             problems.append(f"color match mode {name!r} has gone missing")
 
+    problems.extend(_check_every_choice_is_carried_out())
+    problems.extend(_check_the_engine_keeps_no_defaults_of_its_own())
+
     if problems:
         _report(problems)
         return 1
 
     print("\nWIRING OK")
     return 0
+
+
+def _check_every_choice_is_carried_out() -> list[str]:
+    """A dropdown value nothing acts on is the quietest kind of broken.
+
+    Every list here is offered to somebody in the interface, and every one is
+    read somewhere else that decides what actually happens. Most of those
+    readers fall back to a default when handed something they do not know, so
+    adding a value in one place and forgetting the other produces no error at
+    all: the setting simply does nothing, and looks like it worked.
+    """
+    from pixie.core import engine, steps
+    from pixie.system import mouse, screen
+
+    problems: list[str] = []
+
+    # Pick order. _sort_key falls back to "largest" for anything it does not
+    # recognise, so a missing order silently becomes the default.
+    fallback = screen._sort_key("something that is not an order")
+    sample = [(10, 20, 30, 40, 1200), (50, 60, 70, 80, 5600)]
+    for order in screen.PICK_ORDERS:
+        if order == "largest":
+            continue
+        if [fallback(b) for b in sample] == [screen._sort_key(order)(b) for b in sample]:
+            problems.append(f"pick order {order!r} sorts exactly like the "
+                            "fallback, so it has no rule of its own")
+
+    # Must-reach sides. The matcher builds its list of reached sides from these
+    # four names, so a side outside them can never be satisfied by anything.
+    can_be_reached = {"left", "top", "right", "bottom"}
+    for side in screen.REACH_SIDES:
+        if side != "any" and side not in can_be_reached:
+            problems.append(f"'must run off the edge' offers {side!r}, which "
+                            "the matcher never reports reaching")
+    if set(steps.REACH_SIDES) != set(screen.REACH_SIDES):
+        problems.append("steps.REACH_SIDES and screen.REACH_SIDES disagree")
+    if set(steps.PICK_ORDERS) != set(screen.PICK_ORDERS):
+        problems.append("steps.PICK_ORDERS and screen.PICK_ORDERS disagree")
+
+    # Where the cursor parks. The GUI offers exactly PARK_LABELS, and the
+    # engine decides where to send it by branching on the same keys.
+    import inspect
+
+    park_source = inspect.getsource(engine.Engine._park_target)
+    for mode in engine.PARK_LABELS:
+        if mode != "off" and f'"{mode}"' not in park_source:
+            problems.append(f"cursor mode {mode!r} is offered in Settings but "
+                            "_park_target has no branch for it")
+
+    # A section can override parking, and the engine reads that value back.
+    section_source = inspect.getsource(engine.Engine._enter_section)
+    for value in steps.SECTION_PARK:
+        if value not in steps.SECTION_PARK_LABELS:
+            problems.append(f"section cursor setting {value!r} has no label")
+    if '"off"' not in section_source:
+        problems.append("_enter_section no longer reads the section's cursor "
+                        "setting, so 'leave it exactly where it is' does nothing")
+
+    # Hotkeys. The GUI offers whatever hotkey_names says, and key_pressed is
+    # what then has to recognise it.
+    for name in screen.hotkey_names():
+        try:
+            screen.key_pressed(name)
+        except ValueError:
+            problems.append(f"hotkey {name!r} is offered but key_pressed "
+                            "refuses it")
+        except OSError:
+            pass  # no desktop to ask; the lookup is what we were testing
+
+    # Mouse buttons.
+    for button in steps.BUTTONS:
+        if button not in mouse._BUTTONS:
+            problems.append(f"button {button!r} is offered but mouse.click "
+                            "does not know it")
+
+    # Anchors. Every one has to move the aim somewhere, or it is decoration.
+    box = (100, 200, 300, 400)
+    aimed = {}
+    for anchor in steps.ANCHORS:
+        step = {"anchor": anchor, "offset": (0, 0)}
+        aimed[anchor] = engine.Engine._aim(_NoEngine(), step, box, None)
+    if len(set(aimed.values())) != len(steps.ANCHORS):
+        repeated = [a for a in aimed if list(aimed.values()).count(aimed[a]) > 1]
+        problems.append(f"these anchors all aim at the same pixel: {repeated}")
+
+    print(f"  {len(screen.PICK_ORDERS)} pick orders, "
+          f"{len(steps.ANCHORS)} anchors, {len(screen.REACH_SIDES)} edges, "
+          f"{len(engine.PARK_LABELS)} cursor modes, all acted on")
+    return problems
+
+
+def _check_the_engine_keeps_no_defaults_of_its_own() -> list[str]:
+    """The engine must read a field's default from the field, not restate it.
+
+    `step.get("confidence", 0.85)` works perfectly until the declared default
+    changes, and then the editor shows one number while the run uses another.
+    Nothing fails; the step simply behaves unlike what the interface says. The
+    engine has `_value` for exactly this, so a literal second argument to
+    step.get on a declared field is the smell.
+
+    A handful are deliberate, and say why here rather than going unremarked.
+    """
+    import ast
+    import inspect
+    from pathlib import Path
+
+    from pixie.core import engine, steps
+
+    deliberate = {
+        # An empty key must be an error, not a quiet press of the default one.
+        "key": "an unset key has to fail rather than press Enter",
+        # No upper bound means a fixed pause, not the declared default.
+        "seconds_max": "a missing maximum means 'no range', not 1.0",
+        # Structural, and true of steps the vocabulary has never heard of.
+        "enabled": "every step is on unless it says otherwise",
+        "type": "read before we know which type it is",
+        "pause": "presence is the question, not the value",
+        "offset": "absent means no offset at all",
+        "indent": "structure, not a setting",
+    }
+    declared = {spec.key: spec.default
+                for step_type in steps.STEP_TYPES.values()
+                for spec in step_type.fields}
+
+    source = Path(inspect.getfile(engine)).read_text(encoding="utf-8")
+    problems = []
+    for node in ast.walk(ast.parse(source)):
+        if not (isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "get"
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "step"
+                and len(node.args) == 2
+                and isinstance(node.args[0], ast.Constant)):
+            continue
+        key = node.args[0].value
+        if key in deliberate or key not in declared or declared[key] is None:
+            continue
+        if not isinstance(node.args[1], ast.Constant):
+            continue
+        problems.append(
+            f"engine.py line {node.lineno}: step.get({key!r}, "
+            f"{node.args[1].value!r}) keeps its own copy of a default the "
+            f"field declares as {declared[key]!r}. Use self._value.")
+
+    print(f"  {len(declared)} declared fields, no second copy of any default")
+
+    # --help prints the CLI's docstring verbatim, so a command named there
+    # that no longer exists is instructions that cannot be followed. It named
+    # automator.py and gui.py for a while after both were renamed away.
+    import re
+
+    from pixie import cli
+
+    root = Path(__file__).resolve().parent.parent
+    for text in (cli.__doc__ or "", engine.__doc__ or ""):
+        for named in re.findall(r"python ([A-Za-z_][\w/]*\.py)", text):
+            if not (root / named).exists():
+                problems.append(f"the --help text tells you to run {named!r}, "
+                                "which is not there any more")
+    return problems
+
+
+class _NoEngine:
+    """Just enough of an Engine for _aim, which only reads the step."""
+
+    def _value(self, step, key, default):
+        value = step.get(key)
+        return default if value is None else value
 
 
 def _outcomes_the_engine_handles() -> set[str]:

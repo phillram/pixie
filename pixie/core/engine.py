@@ -489,6 +489,10 @@ class Engine:
         deadline = time.monotonic() + timeout if timeout > 0 else math.inf
         started = time.monotonic()
         announced = started
+        # How long to leave between looks. 0 means "as often as we sensibly
+        # can", which is the guard's own pace rather than a spin.
+        poll = float(self.sequence.settings.poll_interval)
+        poll = GUARD_INTERVAL if poll <= 0 else poll
 
         while True:
             self._guard()
@@ -510,7 +514,20 @@ class Engine:
                         else f"gives up in {deadline - now:.0f}s")
                 self.log(f"    still waiting for {what}, {now - started:.0f}s so "
                          f"far ({left})", "muted")
-            time.sleep(min(GUARD_INTERVAL, self.sequence.settings.poll_interval))
+
+            # Wait out the poll interval in guard-sized slices: the stop key
+            # stays responsive however long the interval is, and the interval
+            # itself is honored. Sleeping the shorter of the two instead meant
+            # every look happened at the guard's pace, so "how often to
+            # re-check" did nothing at any value above 0.05 and the screen was
+            # scanned several times more often than asked.
+            resume = min(now + poll, deadline)
+            while True:
+                now = time.monotonic()
+                if now >= resume:
+                    break
+                time.sleep(min(GUARD_INTERVAL, resume - now))
+                self._guard()
 
     def _find(self, step: dict[str, Any], timeout: float) -> screen.Match | None:
         """Wait for the step's image to appear."""
@@ -875,8 +892,9 @@ class Engine:
         times = f" x{presses}" if presses > 1 else ""
         self.log(f"    press {keyboard.label(key)}{times}{suffix}")
         if not self.dry_run:
-            keyboard.press(key, presses, float(step.get("interval", 0.08)),
-                           float(step.get("hold", 0.05)))
+            keyboard.press(key, presses,
+                           float(self._value(step, "interval", 0.08)),
+                           float(self._value(step, "hold", 0.05)))
         self.acted = True
         return "ok"
 
@@ -917,7 +935,11 @@ class Engine:
         return "jump"
 
     def _do_wait(self, step: dict[str, Any]) -> str:
-        low = float(step.get("seconds", 1.0))
+        low = float(self._value(step, "seconds", 1.0))
+        # A missing upper bound means a fixed pause, not the declared default.
+        # Reading the declaration here would turn "wait 5 seconds" in a
+        # hand-written file into "wait somewhere between 5 and 1", which is a
+        # strange thing to have meant.
         high = float(step.get("seconds_max", low) or low)
         pause = _between(low, high)
         self.log(f"    waiting {pause:.2f}s")
@@ -1086,6 +1108,12 @@ class Engine:
 
             ran_here += 1
             outcome = self.run_step(step)
+            # Whether something happened belongs to the step that did it, and
+            # has to be read back whatever that step then returns. Left set by
+            # a step that clicked and then failed, it would be attributed to
+            # the next step that succeeds.
+            acted, self.acted = self.acted, False
+            acted_here = acted_here or acted
             if outcome == "ok":
                 # Parking and pausing are both about the aftermath of doing
                 # something. A step that only looked at the screen has none:
@@ -1093,8 +1121,6 @@ class Engine:
                 # nothing to react to. In a loop of seven steps where two of
                 # them click, skipping the other five saves more time than
                 # every timeout in the loop put together.
-                acted, self.acted = self.acted, False
-                acted_here = acted_here or acted
                 if acted:
                     self._park_mouse()
                 if acted or step.get("pause"):
@@ -1142,7 +1168,11 @@ class Engine:
             if on_timeout == "restart_section":
                 self.log(f"    back to the first step of '{name}'", "warn")
                 index = start
-                ran_here = 0
+                # Starting the section again abandons the lap in progress, so
+                # it counts for nothing from here on. Carrying its work forward
+                # would make the next lap look productive when it was not, and
+                # 'When nothing has happened' would never reach its count.
+                ran_here = acted_here = 0
                 self._sleep(self._section_pause(sections[current]))
                 continue
             if on_timeout == "next_section":

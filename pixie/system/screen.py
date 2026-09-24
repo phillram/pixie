@@ -362,8 +362,9 @@ def _search(
     # is beside it. A square reach cannot tell those apart, and every pixel of
     # sideways reach is an invitation to the background.
     across = join if join_across is None else int(join_across)
+    joined = join > 0 or across > 0
     grouping = mask
-    if join > 0 or across > 0:
+    if joined:
         grouping = cv2.dilate(mask, np.ones((int(join) * 2 + 1,
                                              across * 2 + 1), np.uint8))
 
@@ -379,8 +380,12 @@ def _search(
                   slice(box_left, box_left + int(stats[n, cv2.CC_STAT_WIDTH])))
         member = labels[window] == n
         pieces = 1
-        if join > 0:
+        if joined:
             # Grouping was done on a fattened copy, so measure the real pixels.
+            # This has to follow *any* fattening, sideways included. Measuring
+            # a sideways-joined patch on the fattened copy reported it wider
+            # than it was and put its left edge half the reach too far left,
+            # which is exactly where a left-edge anchor then clicked.
             member &= mask[window] > 0
             # ...and count what was glued together. A patch built from several
             # pieces is the one place joining can go wrong: a speck of the

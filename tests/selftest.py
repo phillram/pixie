@@ -133,6 +133,7 @@ def main() -> int:
     failures.extend(_check_keyboard())
     failures.extend(_check_enter_is_the_main_one())
     failures.extend(_check_look_alike_keys_are_told_apart())
+    failures.extend(_check_how_often_it_looks())
     failures.extend(_check_mouse_movement_is_injected())
     failures.extend(_check_mouse())
 
@@ -475,6 +476,66 @@ def _check_a_section_that_achieves_nothing() -> list[str]:
     if crossing.idle_laps != 0:
         problems.append(f"entering a section inherited {crossing.idle_laps} "
                         "idle laps from the one before it")
+
+    # A lap is idle when *that* lap achieved nothing. Going back to the top of
+    # a section abandons the lap in progress, so whatever it managed before
+    # giving up must not count towards the next one. Otherwise a click in a
+    # lap that was thrown away makes the following idle lap look productive,
+    # and the idle check never reaches its count.
+    # Lap 1 clicks and is then abandoned part-way; laps 2 and 3 achieve
+    # nothing and run to the end. Two idle laps, so the count must read 2. If
+    # lap 1's click carries over, lap 2 looks productive and the count reads 1.
+    done = {"clicked": False, "failed": False, "laps": 0}
+
+    class Restarting(engine_mod.Engine):
+        def run_step(self, step):
+            tag = step.get("tag", "")
+            if tag == "click_once":
+                if not done["clicked"]:
+                    done["clicked"] = True
+                    self._click(10, 10, step, "something")
+                return "ok"
+            if tag == "fail_once":
+                if not done["failed"]:
+                    done["failed"] = True
+                    return "timeout"      # -> back to the first step of this section
+                return "ok"
+            if tag == "count":
+                done["laps"] += 1
+                return "ok" if done["laps"] < 3 else "timeout"
+            return super().run_step(step)
+
+    restarter = Restarting(engine_mod.Sequence(
+        name="restarting",
+        steps=[{"type": "section", "name": "Looping", "enabled": True},
+               step("click_once", "continue"),
+               step("fail_once", "restart_section"),
+               step("count", "next_section")],
+        settings=engine_mod.Settings(step_pause_min=0, step_pause_max=0,
+                                     section_pause_min=0, section_pause_max=0,
+                                     cycle_pause_min=0, cycle_pause_max=0,
+                                     failsafe_corner=False)), dry_run=True)
+    restarter.run(max_cycles=1)
+    if restarter.idle_laps != 2:
+        problems.append(
+            f"two laps achieved nothing but the count says {restarter.idle_laps}. "
+            "A click in the lap that 'back to the first step of this section' "
+            "abandoned was carried into the lap after it.")
+
+    # Having done something is a fact about one step, and it has to be cleared
+    # whatever that step then returns. Left set by a step that failed, it gets
+    # attributed to whichever step runs next and succeeds.
+    leaky = Watching(engine_mod.Sequence(name="x"), dry_run=True)
+    leaky.acted = True
+    leaky.run_cycle_consumed = None
+    steps_run = [{"type": "press_key", "name": "fails", "enabled": True,
+                  "key": "Q", "tag": "limit", "on_timeout": "next_section"}]
+    leaky.sequence.steps = steps_run
+    laps["left"] = 1          # 'limit' returns timeout straight away
+    leaky.run_cycle()
+    if leaky.acted:
+        problems.append("a step that failed left 'something happened' set, so "
+                        "the next step to succeed takes the credit for it")
 
     # The count itself: three idle laps, then it has something to report.
     solo = Watching(engine_mod.Sequence(name="x"), dry_run=True)
@@ -1638,6 +1699,36 @@ def _check_joining_sideways_is_its_own_distance() -> list[str]:
                                            "join": 40}])
     if older[0].get("join_across") != 40:
         problems.append(f"an older file did not inherit its join sideways: {older}")
+
+    # Whatever the reach, a patch is measured on the pixels that are really
+    # there. Grouping happens on a fattened copy of the mask, and measuring
+    # that copy instead reported a patch wider than it was, with its left edge
+    # half the reach too far left - which is where a left-edge anchor clicks.
+    solid = np.zeros((300, 400, 3), dtype=np.uint8)
+    solid[80:140, 100:220] = (200, 40, 40)
+    screen_mod.grab = lambda _region=None: solid
+    bounds = screen_mod.virtual_bounds
+    screen_mod.virtual_bounds = lambda: (0, 0, 400, 300)
+    try:
+        shape = dict(region=(0, 0, 400, 300), target_rgb=(40, 40, 200),
+                     tolerance=30, min_pixels=10, match="rgb")
+        for reach_down, reach_across in ((0, 0), (10, 0), (0, 8), (10, 8)):
+            found = screen_mod.find_colors(join=reach_down,
+                                           join_across=reach_across, **shape)
+            if not found:
+                problems.append(f"join {reach_down}/{reach_across} found nothing")
+                continue
+            got = (found[0].width, found[0].height, found[0].left, found[0].top)
+            if got != (120, 60, 100, 80):
+                problems.append(
+                    f"join {reach_down} up and down, {reach_across} sideways "
+                    f"measured the shape as {got[0]}x{got[1]} at {got[2]},{got[3]} "
+                    "instead of 120x60 at 100,80 - it measured the fattened "
+                    "copy rather than the real pixels")
+    finally:
+        screen_mod.grab = original
+        screen_mod.virtual_bounds = bounds
+    print("                  a solid 120x60 measures 120x60 at every reach")
     return problems
 
 
@@ -2101,6 +2192,66 @@ def _check_enter_is_the_main_one() -> list[str]:
 
     print("Enter identity : main Enter (no E0 prefix), numpad Enter separate")
     return []
+
+
+def _check_how_often_it_looks() -> list[str]:
+    """'How often to re-check' has to be what actually happens.
+
+    The setting promises seconds between looks while waiting. The wait used to
+    sleep whichever was shorter, it or the 50ms guard that watches the stop
+    key, so every value above 0.05 did nothing: the screen was scanned twenty
+    times a second whatever Settings said, at several times the CPU the label
+    warns about.
+
+    Both halves matter, and they pull against each other. The stop key has to
+    stay responsive during a long interval, so the wait cannot simply sleep
+    the whole interval in one go either.
+    """
+    problems = []
+    looks: list[float] = []
+    guards = {"count": 0}
+
+    class Counting(engine_mod.Engine):
+        def _guard(self):
+            guards["count"] += 1
+
+    def run(interval: float, timeout: float) -> None:
+        looks.clear()
+        guards["count"] = 0
+        runner = Counting(engine_mod.Sequence(
+            name="polling",
+            settings=engine_mod.Settings(poll_interval=interval,
+                                         failsafe_corner=False)), dry_run=True)
+        runner._poll_until(lambda: looks.append(time.monotonic()) or None,
+                           timeout, "something that never turns up")
+
+    # A quarter of a second between looks over three quarters of a second is
+    # three or four looks, not fifteen.
+    run(0.25, 0.75)
+    if not 2 <= len(looks) <= 5:
+        problems.append(f"0.25s between looks over 0.75s gave {len(looks)} of "
+                        "them, expected about 3 - the interval is not honored")
+    gaps = [b - a for a, b in zip(looks, looks[1:])]
+    if gaps and min(gaps) < 0.2:
+        problems.append(f"the shortest gap between looks was {min(gaps):.3f}s, "
+                        "under the 0.25s asked for")
+
+    # ...while the stop key is still checked several times within each of
+    # those gaps, or stopping a run would feel sluggish.
+    slow_looks, slow_guards = len(looks), guards["count"]
+    if slow_guards < slow_looks * 3:
+        problems.append(f"only {slow_guards} stop-key checks across "
+                        f"{slow_looks} looks, so a long interval makes the "
+                        "stop key slow to answer")
+
+    # A small interval still runs fast.
+    run(0.01, 0.3)
+    if len(looks) < 8:
+        problems.append(f"0.01s between looks over 0.3s gave only {len(looks)}")
+
+    print(f"Poll interval   : 0.25s over 0.75s -> {slow_looks} looks and "
+          f"{slow_guards} stop-key checks; 0.01s over 0.3s -> {len(looks)} looks")
+    return problems
 
 
 def _check_look_alike_keys_are_told_apart() -> list[str]:

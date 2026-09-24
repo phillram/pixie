@@ -1,11 +1,11 @@
 """Run a saved sequence from the command line, without the GUI.
 
-    python automator.py sequences/my_job.json
-    python automator.py sequences/my_job.json --dry-run
-    python automator.py sequences/my_job.json --max-cycles 20
+    python -m pixie sequences/my_job.json
+    python -m pixie sequences/my_job.json --dry-run
+    python -m pixie sequences/my_job.json --max-cycles 20
 
-Build sequences in the GUI (`python gui.py`); this is for running one
-unattended, from a shortcut or a scheduled task.
+Build sequences in the window (`python -m pixie` with no arguments); this is
+for running one unattended, from a shortcut or a scheduled task.
 """
 
 from __future__ import annotations

@@ -217,7 +217,7 @@ Select a divider and the section gets three settings of its own:
 * **Cap every wait in here**, a ceiling on how long any step inside may wait. A
   step asking for 30 seconds, or for forever, gives up after the cap instead. A
   step that already waits less keeps its own shorter time. The log says so when
-  the section starts: `=== Before Game === (nothing here waits longer than 3s)`
+  the section starts: `=== Sign in === (nothing here waits longer than 3s)`
 * **Cursor after a click in here**, covered under [The cursor](#the-cursor)
 
 A sequence with no dividers is one section covering everything.
@@ -246,12 +246,12 @@ dropdown using the names of your own sections:
 
 ```
 Go back to the very first step of the sequence
-    Abandons 'In Game' and starts the whole script again from 'Before Game'.
+    Abandons 'Main screen' and starts the whole script again from 'Sign in'.
     Everything before this step runs a second time.
 
 Go back to the first step of this section
-    Starts 'In Game' again from its own step 1, and does not touch any other
-    section.
+    Starts 'Main screen' again from its own step 1, and does not touch any
+    other section.
 ```
 
 ### Checks that guard a group
@@ -261,11 +261,11 @@ above is then a check, and the indented run below it only happens when that
 check finds what it is looking for:
 
 ```
- 1. Look for card back
- 2. Is a target wanted?          If it is not found: skip the steps indented under it
-     ↳ 3. Click on myself
-     ↳ 4. Wait a moment
- 5. Select playable card
+ 1. Look for the toolbar
+ 2. Did a dialog open?           If it is not found: skip the steps indented under it
+     ↳ 3. Tick 'do not ask again'
+     ↳ 4. Click OK
+ 5. Pick the next item
 ```
 
 If step 2 finds nothing, 3 and 4 are skipped and the sequence carries on at 5.
@@ -290,7 +290,7 @@ halves agree, because an indent that is not actually guarding anything looks
 identical to one that is:
 
 ```
-'Is a target wanted?' has 2 step(s) indented under it, but 'If it is not
+'Did a dialog open?' has 2 step(s) indented under it, but 'If it is not
 found' is not set to 'Skip the steps indented under it', so they run whether
 it finds anything or not.
 ```
@@ -302,24 +302,25 @@ step, so reordering, sections and the save format are untouched by it.
 
 Every branch above is phrased the other way round, as `If it is not found`. That
 covers most things, because a screen you were waiting on going away is usually
-the same event as the next one arriving. A hand of cards disappearing *is* the
-game ending.
+the same event as the next one arriving. The work area emptying *is* the job
+finishing.
 
-Sometimes it is not. A victory screen appearing over a game still in progress is
-its own event, and there is nothing whose absence means the same thing.
+Sometimes it is not. A "finished" banner appearing over a screen that is still
+working is its own event, and there is nothing whose absence means the same
+thing.
 
 `Go somewhere else` does nothing but change where the run goes next. On its own
 it is unconditional, which is rarely useful. Indent it under a check and it
 becomes the missing half:
 
 ```
- 1. Look for the victory screen    If it is not found: skip the steps indented under it
+ 1. Look for the finished banner   If it is not found: skip the steps indented under it
      ↳ 2. Go somewhere else        -> leave this section and start the next one
- 3. Select playable card
+ 3. Pick the next item
 ```
 
-If the victory screen is there, step 2 runs and the section is over. If it is
-not, step 2 is skipped and play carries on at 3.
+If the banner is there, step 2 runs and the section is over. If it is not, step
+2 is skipped and the work carries on at 3.
 
 It can send the run to the same four places an `If it is not found` can, with
 the same words for them.
@@ -327,7 +328,7 @@ the same words for them.
 ### When nothing is on screen to check
 
 Every other check asks what is on screen. Some states do not announce themselves
-in pixels at all: a hand with nothing playable in it looks exactly like a hand
+in pixels at all: a list with nothing left to act on looks exactly like a list
 you have not got to yet. What tells them apart is that nothing is being
 *achieved*, which is a fact about the run rather than about the screen.
 
@@ -336,7 +337,7 @@ many times without a single click or keystroke. Then it finds something once,
 and starts counting again:
 
 ```
- 12. Select a playable card       If it is not found: skip the steps indented under it
+ 12. Pick the next item           If it is not found: skip the steps indented under it
      ...
  14. When nothing has happened    After 3 idle times round
      ↳ 15. Press Enter
@@ -369,9 +370,9 @@ of a second is often plenty. Set it to 0 to wait forever instead.
 number to look for:
 
 ```
-burst_lightning.png not there after 3s, skipping
-main_menu.png did not appear after 30s
-still waiting for main_menu.png, 15s so far (gives up in 15s)
+popup.png not there after 3s, skipping
+toolbar.png did not appear after 30s
+still waiting for toolbar.png, 15s so far (gives up in 15s)
 ```
 
 Either shorten that step's own `Give up after`, or cap the whole section at once
@@ -379,18 +380,24 @@ from its divider.
 
 ### Search regions
 
-Scanning the whole desktop is the slow part. Measured on a 7680x2160 dual
-monitor setup:
+Scanning the whole desktop is the slow part, and it scales with the area:
 
 | Search area | Time per scan |
 | --- | --- |
-| Whole desktop, 7680x2160 | 793 ms |
-| One monitor, 1920x1080 | 119 ms |
-| A panel, 400x300 | 16 ms |
+| A whole multi-monitor desktop | around 800 ms |
+| One 1920x1080 monitor | around 120 ms |
+| A 400x300 panel | around 16 ms |
 
 Set a search region on every image and color step. It is the single biggest
 speed win available. Make the box comfortably larger than where the target
 appears, because anything outside it is invisible to the matcher.
+
+`How often to re-check` in Settings decides how many of those scans happen
+while a step is waiting. At the default of 0.25 seconds a step waiting three
+seconds scans about twelve times; at 0.05 it scans sixty. Lower it when you
+need to catch something brief, raise it when a step is just burning CPU
+waiting for a screen that takes a while. The stop key is checked every 50ms
+regardless, so a long interval never makes stopping sluggish.
 
 ### Pauses
 
@@ -419,8 +426,9 @@ next thing Pixie needs to look at. Two settings make it less mechanical:
 
 All movement is sent the same way clicks are, as genuine input. The obvious way
 to move a cursor moves it without telling anyone, so a game never learns the
-pointer went anywhere and carries on believing it is where it was. That is how a
-hovered card stays enlarged after the pointer has visibly left it.
+pointer went anywhere and carries on believing it is where it was. That is how
+something that grows when you hover it stays grown after the pointer has
+visibly left it.
 
 Parking also nudges a pixel and back on arrival, because an application that
 only re-checks what is under the pointer when the pointer moves can otherwise be
@@ -437,8 +445,8 @@ wandering, while the screen after it may need exactly that. The divider says so
 in the list, because it changes what runs without appearing among the steps:
 
 ```
-=== Before Game ===   (cursor held still)
-=== In Game ===
+=== Sign in ===   (cursor held still)
+=== Main screen ===
 ```
 
 A sequence saved before this existed had a single point, which becomes a box one
@@ -517,24 +525,24 @@ as well. `python tools/tune_color.py` does the same from a terminal.
 
 This is the thing that will bite you.
 
-A highlight around a card or a button is almost never one connected patch of
+A highlight around a tile or a button is almost never one connected patch of
 color. Whatever overlaps it cuts it up, its edges soften, and its corners fade
-out, so what the matcher sees is a scattering of fragments. A single card outline
-can arrive as a dozen separate pieces.
+out, so what the matcher sees is a scattering of fragments. A single outline can
+arrive as a dozen separate pieces.
 
 That matters because everything is measured from the middle of a *patch*. If the
 patch is a 10x16 fragment of the left edge, its middle is on the left edge, and a
 step that clicks slightly below it clicks the wrong thing entirely.
 
 `Join pieces up and down (px)` is the fix. Set it to comfortably more than the
-widest gap in the outline, 20 to 40 for a card border, and the pieces count as
-one patch again, whose middle is the middle of the card. On a test with two card
+widest gap in the outline, 20 to 40 for a tile border, and the pieces count as
+one patch again, whose middle is the middle of the tile. On a test with two tile
 borders broken into 48 fragments:
 
 | Join | Patches found | Middle of the first one |
 | --- | --- | --- |
-| 0 | 48 | 224px away from the card's middle |
-| 20 | 2 | exactly the card's middle |
+| 0 | 48 | 224px away from the tile's middle |
+| 20 | 2 | exactly the tile's middle |
 
 The log warns when it sees the pattern:
 
@@ -556,10 +564,11 @@ outline. From a real run:
 found RGB(37, 254, 254) - 476 pixels in a 500x110 box, 45 pieces joined
 ```
 
-Forty-five pieces of about ten pixels each, spread over half the hand, clicked as
-though it were a card. Every limit on the step passed, because **every one of
-them is measured on the assembled shape**. That is the whole point of joining,
-and it is also what lets joining manufacture a patch out of noise.
+Forty-five pieces of about ten pixels each, spread across half the strip,
+clicked as though they were one tile. Every limit on the step passed, because
+**every one of them is measured on the assembled shape**. That is the whole
+point of joining, and it is also what lets joining manufacture a patch out of
+noise.
 
 `Ignore pieces smaller than (px)` is the one setting that runs *before* joining.
 Real pieces of an outline are hundreds of pixels and specks are tens, so 100
@@ -575,21 +584,21 @@ it.
 
 **What breaks an outline up and what sits next to it are different things.**
 
-A card overlapped by its neighbour shows a top bar with slivers of its sides
+A tile overlapped by its neighbour shows a top bar with slivers of its sides
 below it, pieces stacked above one another, needing a generous reach upward.
-Anything else on screen glowing the same color is *beside* it: a lamp, a lit
-prop, a beam. Every pixel of sideways reach is an invitation to those.
+Anything else on screen glowing the same color is *beside* it: a lit panel, an
+icon, a beam. Every pixel of sideways reach is an invitation to those.
 
-So the two are separate settings. From a real hand, with a lit bottle in the
-background 40px clear of a card:
+So the two are separate settings. From a real strip, with a lit panel in the
+background 40px clear of a tile:
 
 | Reach | Result |
 | --- | --- |
-| 40 both ways | one 560x310 patch starting at the bottle, so `leftmost` with a left-edge anchor clicks the bottle |
-| 40 up and down, 0 sideways | two patches: the bottle alone, and the card's outline whole at 480x290 |
+| 40 both ways | one 560x310 patch starting at the panel, so `leftmost` with a left-edge anchor clicks the panel |
+| 40 up and down, 0 sideways | two patches: the panel alone, and the tile's outline whole at 480x290 |
 
 The outline still comes together, because its slivers join through the bar above
-them rather than across to each other. The two sides of one card are a card's
+them rather than across to each other. The two sides of one tile are a tile's
 width apart and were never going to join sideways anyway.
 
 **Start `Join pieces side to side` at 0.** Raise it only if you can see, in What
@@ -606,13 +615,13 @@ against a background: a beam stays a sliver however many pieces it is joined
 from.
 
 Saturation cannot help when a background thing genuinely glows, like a lit beam
-or a neon sign. But a beam is not shaped like the thing you want. A card
-highlight is as wide as a card:
+or a bright sign. But a beam is not shaped like the thing you want. A tile
+highlight is as wide as a tile:
 
 ```
-  1. 45x306 at 1170, 1853    3092 pixels
-  2. 776x306 at 1529, 1853  10357 pixels
-  3. 31x188 at 2638, 1971    3985 pixels
+  1. 45x306 at 170, 850     3092 pixels
+  2. 776x306 at 529, 850   10357 pixels
+  3. 31x188 at 1638, 968    3985 pixels
 ```
 
 Same hue, same saturation, same height, and 45px wide against 776px. What
@@ -627,8 +636,8 @@ and drop the 2 smaller.
 It only says this when the sizes really do fall into two groups.
 
 Set a size filter against what a badly covered target looks like, not a clean
-one. A card in the middle of a fan shows only its top bar and two slivers of its
-sides, so a minimum height picked from a fully visible card throws it away
+one. A tile in the middle of a row shows only its top bar and two slivers of its
+sides, so a minimum height picked from a fully visible tile throws it away
 entirely.
 
 ### Where it sits beats what color it is
@@ -636,11 +645,11 @@ entirely.
 Color is the weakest thing you have. Size and shape are better. **Position is the
 best of the lot**, when the thing you want has one.
 
-A hand of cards fans wider as it grows and every card tilts differently, so their
-size, their angle and the gaps between them all move about. What never moves is
-that a hand sits at the bottom of the screen. Every card's glow reaches the
-bottom of an area drawn over the hand, and a lit prop in the background does not,
-whatever color it is.
+A row of tiles spreads wider as it grows and each one can sit at its own angle,
+so their size, their tilt and the gaps between them all move about. What never
+moves is that the row sits along the bottom of the screen. Every tile's glow
+reaches the bottom of an area drawn over the row, and a lit panel in the
+background does not, whatever color it is.
 
 `Must run off the edge` says so, and anything that does not reach that edge is
 dropped and told why:
@@ -657,19 +666,19 @@ about the background at all.
 
 It is not a substitute for the size limits, though. A vertical beam running the
 full height of the screen *does* reach the bottom, so only `Patch at least this
-wide` drops it. A prop floating above the hand is the right shape but the wrong
+wide` drops it. A panel floating above the row is the right shape but the wrong
 place, so only this drops it. Set both.
 
 ### When the background is the same color
 
 Hue matching finds a *shade*, and plenty of backgrounds are the same shade as the
-thing you want. A blue spaceship interior behind a blue card highlight is the
-hard case. It gets worse with joining switched on, because joining will happily
-glue a background streak onto your target and report the middle of the pair:
+thing you want. A blue scene behind a blue highlight is the hard case. It gets
+worse with joining switched on, because joining will happily glue a background
+streak onto your target and report the middle of the pair:
 
 | Saturation floor | Patch found | Middle |
 | --- | --- | --- |
-| 90 (default) | 1000x290, streak and outline as one | 80px off the card |
+| 90 (default) | 1000x290, streak and outline as one | 80px off the tile |
 | 180 | 360x290, the outline alone | exactly right |
 
 **Saturation is what separates them.** A highlight is vivid, and a background of
@@ -691,7 +700,7 @@ A range that wide is the tell. 120 is the background, 250 is the highlight. Set
   1. 360x290 at 500, 10   26468 pixels   middle 680, 155   saturation 250-250
 ```
 
-One patch, the outline alone, centred on the card.
+One patch, the outline alone, centred on the tile.
 
 ### The order to tune in
 
@@ -713,7 +722,7 @@ is inside a patch, no later setting can get it out again.
 
 ### Several things glowing at once
 
-A row of cards can all be highlighted at the same time. `If several match, use`
+A row of tiles can all be highlighted at the same time. `If several match, use`
 decides which one Pixie goes for:
 
 | Setting | Which patch |
@@ -737,10 +746,10 @@ found RGB(37, 254, 254) - 8680 pixels in a 180x250 box, center 640, 900
 
 ### Two targets that touch
 
-Highlights next to each other can arrive as one patch. Two playable cards side by
-side, their outlines touching, come back as a single wide box, and the middle of
-that box is the gap between the two cards. No amount of joining or unjoining
-fixes it, because at that point the two outlines are genuinely one shape.
+Highlights next to each other can arrive as one patch. Two tiles side by side,
+their outlines touching, come back as a single wide box, and the middle of that
+box is the gap between the two. No amount of joining or unjoining fixes it,
+because at that point the two outlines are genuinely one shape.
 
 `Aim at` is the answer. Every step that clicks something it found can aim at an
 edge or a corner instead of the middle, and the offset is applied from there:
@@ -751,27 +760,27 @@ edge or a corner instead of the middle, and the offset is applied from there:
 | its left edge | +90, 0 | the left one, merged or not |
 
 On a real pair of merged outlines 720px wide, the middle lands at 560, exactly
-the seam, while the left edge plus 90 lands at 290, well inside the left card. It
-works the same whether the cards merged that frame or not, which is what makes it
+the seam, while the left edge plus 90 lands at 290, well inside the left tile. It
+works the same whether the two merged that frame or not, which is what makes it
 reliable rather than lucky.
 
-An edge follows the **shape**, not the box around it. On a fan of cards that is
-the whole thing: they lean different ways and sit at different heights, so the
-box round a merged group belongs to no card at all.
+An edge follows the **shape**, not the box around it. On a row of tilted tiles
+that is the whole thing: they lean different ways and sit at different heights,
+so the box round a merged group belongs to no tile at all.
 
 | | y |
 | --- | --- |
-| Middle of the box | 240, the left card's top frame |
-| Where the shape meets the left edge | 359, the middle of that card |
+| Middle of the box | 240, the left tile's top frame |
+| Where the shape meets the left edge | 359, the middle of that tile |
 
 Corners still use the box, because a corner of a shape is not a well defined
 thing. Image matches are rectangles, so their box is the truth.
 
 ### An intruder joined on
 
-Joining sweeps up *anything* of the same color within reach. A lit prop 50px from
-a card gets pulled in, and then the patch is wider than the card and its left edge
-is the prop's left edge.
+Joining sweeps up *anything* of the same color within reach. A lit panel 50px
+from a tile gets pulled in, and then the patch is wider than the tile and its
+left edge is the panel's left edge.
 
 Nothing about that patch looks wrong. Sizes are only measured after joining, so
 the intruder inherits the outline's height and sails past every minimum you set,
@@ -806,7 +815,7 @@ sizes each color step has been finding during this run, and says something when
 one comes back far smaller than the rest:
 
 ```
-found RGB(185, 187, 139) - 71 pixels in a 18x8 box, center 1950, 1797
+found RGB(185, 187, 139) - 71 pixels in a 18x8 box, center 950, 797
     that is far smaller than the 12,877 pixels this step usually finds, so it
     is probably something else that happens to be the right color. Raise
     'Smallest patch' from 40 towards 6,438.
@@ -814,9 +823,8 @@ found RGB(185, 187, 139) - 71 pixels in a 18x8 box, center 1950, 1797
 
 The step's own history is the yardstick, so there is no threshold to guess at and
 it calibrates itself to whatever you are looking for. A step whose finds
-legitimately vary, like highlighted cards coming in anywhere between 3,566 and
-13,622 pixels, is not nagged, and a stray find does not drag the yardstick down
-behind it.
+legitimately vary, anywhere between 3,566 and 13,622 pixels, is not nagged, and a
+stray find does not drag the yardstick down behind it.
 
 ### A picture that did not match
 
@@ -825,7 +833,7 @@ threshold or nothing like what is on screen, and those want opposite fixes. So
 the log says how close it got:
 
 ```
-check_if_game_ended.png did not appear after 1s
+finished_banner.png did not appear after 1s
     the best match anywhere in that area scored 0.42, which is nothing like
     it. The picture is of something that is not on screen, or the area is in
     the wrong place.
@@ -971,12 +979,19 @@ nobody is looking. So each of these has exactly one home:
 | Which menu heading a step sits under | `STEP_GROUPS` | every type appears exactly once, with a hint |
 | Labels for dropdown values | `CHOICE_LABELS` | every choice on every field has one |
 | Log levels | `engine.LOG_LEVELS` | every level has a color in the GUI |
+| Which patch to pick | `screen.PICK_ORDERS` | each order sorts differently from the fallback, and steps agrees |
+| Which edge to require | `screen.REACH_SIDES` | every side is one the matcher reports reaching |
+| Where the cursor parks | `engine.PARK_LABELS` | `_park_target` branches on every mode |
+| Whether a section holds it still | `steps.SECTION_PARK` | all labelled, and `_enter_section` reads it |
+| Keys that can be a hotkey | `screen.hotkey_names()` | `key_pressed` accepts every one it offers |
+| Mouse buttons | `steps.BUTTONS` | `mouse.click` knows each one |
+| Where to aim on a match | `steps.ANCHORS` | no two aim at the same pixel |
+| Default values for a field | the `Field` declaration | the engine has no `step.get(key, literal)` restating one |
+| Commands in `--help` | the CLI docstring | every file it tells you to run exists |
 | Keys Pixie can send | `keyboard.KEYS` | no two fold onto one name, all have plain English, extended flags name real keys |
 
 `check_wiring.py` does all of those except the keyboard, which needs
-`selftest.py`. Two more have one home but no test yet, and rely on the GUI
-importing them rather than restating them: `screen.hotkey_names()` for which
-keys may be a hotkey, and `engine.PARK_LABELS` for where the cursor parks.
+`selftest.py`.
 
 The rule when adding anything: declare it once, and if a second place needs to
 know about it, make `check_wiring.py` prove they agree.
