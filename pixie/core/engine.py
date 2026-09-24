@@ -873,7 +873,7 @@ class Engine:
         presses = int(self._value(step, "presses", 1) or 1)
         suffix = "  [dry run]" if self.dry_run else ""
         times = f" x{presses}" if presses > 1 else ""
-        self.log(f"    press {key}{times}{suffix}")
+        self.log(f"    press {keyboard.label(key)}{times}{suffix}")
         if not self.dry_run:
             keyboard.press(key, presses, float(step.get("interval", 0.08)),
                            float(step.get("hold", 0.05)))

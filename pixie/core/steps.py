@@ -12,7 +12,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable
 
-from pixie.system import screen
+from pixie.system import keyboard, screen
 
 # What to do when a step's timeout expires without the thing appearing.
 #
@@ -655,9 +655,17 @@ STEP_TYPES: dict[str, StepType] = {
         label="Press a key",
         blurb="Tap a key on the keyboard. Set 'Times' above 1 to press it "
               "repeatedly — two taps of Q, for instance. Whatever window has "
-              "focus receives it, so make sure a click step put focus there first.",
+              "focus receives it, so make sure a click step put focus there "
+              "first.\n\n"
+              "Keys that appear twice on a keyboard — Enter, the digits, "
+              "Shift, Ctrl and Alt — are recorded as the one you actually "
+              "pressed, and the box says which. Games treat them as separate "
+              "keys, so if a press seems to do nothing, try its twin.",
         fields=(
-            Field("key", "key", "Key", "Enter", required=True),
+            Field("key", "key", "Key", "Enter", required=True,
+                  hint="Press the key itself. The number pad and the "
+                       "right-hand Shift, Ctrl and Alt are kept separate "
+                       "from their twins on the main keyboard."),
             Field("presses", "integer", "How many taps", 1, minimum=1, maximum=50,
                   hint="How many separate taps. 2 = press it twice."),
             Field("interval", "number", "Gap between taps (s)", 0.08,
@@ -668,7 +676,7 @@ STEP_TYPES: dict[str, StepType] = {
                        "this — raise it to 0.1 if a press seems to go "
                        "nowhere."),
         ),
-        describe=lambda s: (f"Press {s.get('key', '?')}"
+        describe=lambda s: (f"Press {keyboard.label(str(s.get('key') or '?'))}"
                             + (f" x{s['presses']}" if int(s.get("presses", 1) or 1) > 1
                                else "")),
     ),

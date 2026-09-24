@@ -85,18 +85,35 @@ class KeyGrabber:
     """Tiny modal that records the next key you press."""
 
     # tkinter's keysym names don't all match ours.
+    #
+    # The sided and numpad keys are kept apart here rather than folded onto
+    # the plain name. Folding them read as tidy - you pressed Enter, it said
+    # Enter - but it threw away the one thing you were trying to tell Pixie,
+    # and a game that binds only one of the pair then ignored the press with
+    # nothing on screen to explain why.
     TRANSLATE = {
-        "Return": "Enter", "KP_Enter": "Enter", "Escape": "Escape",
+        "Return": "Enter", "KP_Enter": "NumpadEnter", "Escape": "Escape",
         "space": "Space", "BackSpace": "Backspace", "Prior": "PageUp",
-        "Next": "PageDown", "Caps_Lock": "CapsLock",
-        "Shift_L": "Shift", "Shift_R": "Shift",
-        "Control_L": "Ctrl", "Control_R": "Ctrl",
-        "Alt_L": "Alt", "Alt_R": "Alt",
+        "Next": "PageDown", "Caps_Lock": "CapsLock", "Num_Lock": "NumLock",
+        "Print": "PrintScreen",
+        "Shift_L": "LeftShift", "Shift_R": "RightShift",
+        "Control_L": "LeftCtrl", "Control_R": "RightCtrl",
+        "Alt_L": "LeftAlt", "Alt_R": "RightAlt",
         "minus": "Minus", "equal": "Equals", "comma": "Comma",
         "period": "Period", "slash": "Slash", "semicolon": "Semicolon",
         "apostrophe": "Apostrophe", "bracketleft": "LeftBracket",
         "bracketright": "RightBracket", "backslash": "Backslash",
         "grave": "Backtick",
+        "KP_Add": "NumpadPlus", "KP_Subtract": "NumpadMinus",
+        "KP_Multiply": "NumpadMultiply", "KP_Divide": "NumpadDivide",
+        "KP_Decimal": "NumpadPeriod", "KP_Delete": "NumpadPeriod",
+        # With Num Lock off the pad sends these instead. They are still the
+        # pad keys, so record them as such.
+        **{f"KP_{digit}": f"Numpad{digit}" for digit in range(10)},
+        "KP_Insert": "Numpad0", "KP_End": "Numpad1", "KP_Down": "Numpad2",
+        "KP_Next": "Numpad3", "KP_Left": "Numpad4", "KP_Begin": "Numpad5",
+        "KP_Right": "Numpad6", "KP_Home": "Numpad7", "KP_Up": "Numpad8",
+        "KP_Prior": "Numpad9",
     }
 
     def __init__(self, parent: tk.Misc, scale: float = 1.0) -> None:
@@ -113,6 +130,11 @@ class KeyGrabber:
         ttk.Label(frame, text="Press the key you want", style="Title.TLabel").pack()
         self.echo = ttk.Label(frame, text="waiting...", style="Muted.TLabel")
         self.echo.pack(pady=(10, 0))
+        # Filled in only when the key has a look-alike, so it stays empty and
+        # out of the way the rest of the time.
+        self.aside = ttk.Label(frame, text="", style="Blurb.TLabel",
+                               wraplength=int(330 * scale), justify="center")
+        self.aside.pack(pady=(6, 0))
         ttk.Label(frame, text="Escape cancels.", style="Muted.TLabel").pack(pady=(14, 0))
 
         self.window.bind("<Key>", self._on_key)
@@ -122,6 +144,8 @@ class KeyGrabber:
         self.window.geometry(f"+{x}+{y}")
 
     def _on_key(self, event: tk.Event) -> None:
+        if self.result is not None:
+            return  # already caught one and closing; ignore the rest
         keysym = event.keysym
         if keysym == "Escape":
             self.window.destroy()
@@ -136,7 +160,19 @@ class KeyGrabber:
             self.echo.configure(text=f"{keysym} is not a key Pixie can send - try another")
             return
         self.result = name
-        self.window.destroy()
+
+        # Show what was caught before closing. For a key with a look-alike
+        # this is the only moment the difference is visible, so hold the
+        # window open long enough to read it.
+        self.echo.configure(text=keyboard.label(name))
+        twin = keyboard.TWINS.get(name)
+        if twin:
+            self.aside.configure(
+                text=f"Not the same key as {keyboard.label(twin)}. They look "
+                     f"alike and Windows gives them the same code, but a game "
+                     f"can bind one without the other.")
+        self.window.update_idletasks()
+        self.window.after(1400 if twin else 350, self.window.destroy)
 
     def run(self) -> str | None:
         self.window.grab_set()
@@ -1664,7 +1700,11 @@ class App:
         box.bind("<FocusOut>", store)
 
     def _field_key(self, step: dict[str, Any], spec: step_defs.Field, row: int) -> None:
-        var = tk.StringVar(value=str(step.get(spec.key) or ""))
+        # The box shows the plain-English label rather than the stored name,
+        # so that a key with a look-alike keeps saying which one it is for as
+        # long as the step exists - not just in the moment it was recorded.
+        stored = str(step.get(spec.key) or "")
+        var = tk.StringVar(value=keyboard.label(stored) if stored else "")
         self._readonly_entry(row, var)
         ttk.Button(self.editor, text="Press a key...", style="Tool.TButton",
                    command=lambda: self._capture_key(step, spec, var)).grid(
@@ -1677,8 +1717,8 @@ class App:
         if chosen is None:
             return
         self._set_value(step, spec.key, chosen)
-        var.set(chosen)
-        self.log(f"Key set to {chosen}", "good")
+        var.set(keyboard.label(chosen))
+        self.log(f"Key set to {keyboard.label(chosen)}", "good")
 
     def _field_choice(self, step: dict[str, Any], spec: step_defs.Field, row: int) -> int:
         """A dropdown that reads as English but stores the short value.

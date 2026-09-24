@@ -248,12 +248,25 @@ as that game is concerned. `Hold each tap for (s)` is the dial; it defaults to
 0.05, around three frames at 60fps. Raise it to 0.1 before suspecting anything
 subtler.
 
-**It was the wrong key.** `Enter` and `NumpadEnter` are separate entries
-because Windows treats them as one key with a flag on it - same virtual-key
-code, same scan code, differing only by an `E0` prefix. Anything reading window
+**It was the wrong key.** A keyboard has several keys printed twice - Enter,
+the digits, Shift, Ctrl, Alt - and Windows reports the pair as one key with a
+flag on it. Same virtual-key code, same scan code, differing only by an `E0`
+prefix or by which side of the board it came from. Anything reading window
 messages sees `VK_RETURN` either way and cannot tell you which you sent. Games
-read raw input, where the prefix is plainly visible, so they can and do bind
-them separately. If a press does nothing, try the other one.
+read raw input, where the difference is plainly visible, and bind them
+separately. If a press does nothing, try its twin.
+
+Pixie records whichever one you actually pressed and says so everywhere it
+shows the key: `Enter  (the main one)` against `Numpad Enter`, `Left Ctrl`
+against `Right Ctrl`, `5  (main keyboard)` against `Numpad 5`. Keys with no
+twin - `Q`, `F8` - are shown plainly, so the qualifier only appears where it
+earns its space. When you record one of a pair, the capture window holds open
+a moment longer to name the other.
+
+This is worth the noise because the mistake is silent. Until v1.12.0 the
+capture window folded `KP_Enter` onto `Enter` and both `Control_L` and
+`Control_R` onto `Ctrl`, so the interface could not show a difference it had
+already discarded.
 
 That prefix rule reads backwards for Enter compared with every other key: the
 arrows and the Insert/Delete/Home/End cluster are the *extended* ones and their
@@ -261,7 +274,9 @@ numpad twins are plain, but for Enter it is the numpad key that is extended.
 Pixie flagged Enter as extended until v1.11.0, so every `press Enter` arrived as
 numpad Enter - invisible to `tests/selftest.py`'s window, and ignored by the
 game. `_check_enter_is_the_main_one` now asserts the flag directly rather than
-asking a window what it received.
+asking a window what it received, and
+`_check_look_alike_keys_are_told_apart` refuses to let two keys share a name
+or a label, or to let the extended list name a key that does not exist.
 
 ### When a find is probably not the thing
 

@@ -26,10 +26,12 @@ MAPVK_VK_TO_VSC = 0
 # extended one. Flagging it made every "press Enter" arrive as numpad Enter,
 # which window messages hide -- both report VK_RETURN -- but raw input does not,
 # so games read it as a different key and ignore it.
+# Right Ctrl and right Alt are extended; right Shift is not, because it has a
+# scan code of its own (0x36) rather than sharing the left one's.
 _EXTENDED = {
     "Insert", "Delete", "Home", "End", "PageUp", "PageDown",
     "Up", "Down", "Left", "Right", "PrintScreen", "NumLock",
-    "NumpadEnter",
+    "NumpadEnter", "NumpadDivide", "RightCtrl", "RightAlt",
 }
 
 KEYS: dict[str, int] = {
@@ -52,10 +54,21 @@ KEYS: dict[str, int] = {
     "Down": 0x28,
     "Left": 0x25,
     "Right": 0x27,
+    # The plain three are the "either side" virtual keys Windows reports when
+    # it does not care which one you used. Most applications accept them. The
+    # sided ones below are separate keys, and a game may well bind only one.
     "Shift": 0x10,
     "Ctrl": 0x11,
     "Alt": 0x12,
+    "LeftShift": 0xA0,
+    "RightShift": 0xA1,
+    "LeftCtrl": 0xA2,
+    "RightCtrl": 0xA3,
+    "LeftAlt": 0xA4,
+    "RightAlt": 0xA5,
     "CapsLock": 0x14,
+    "NumLock": 0x90,
+    "PrintScreen": 0x2C,
     "Minus": 0xBD,
     "Equals": 0xBB,
     "Comma": 0xBC,
@@ -67,9 +80,86 @@ KEYS: dict[str, int] = {
     "RightBracket": 0xDD,
     "Backslash": 0xDC,
     "Backtick": 0xC0,
+    # The number pad. Every one of these is a distinct key from the one with
+    # the same face on the main keyboard, and applications that read scan
+    # codes tell them apart. The digits only produce these codes while Num
+    # Lock is on; with it off the pad sends Home, End, the arrows and so on.
+    **{f"Numpad{digit}": 0x60 + digit for digit in range(10)},
+    "NumpadPlus": 0x6B,
+    "NumpadMinus": 0x6D,
+    "NumpadMultiply": 0x6A,
+    "NumpadDivide": 0x6F,
+    "NumpadPeriod": 0x6E,
 }
 
 KEY_NAMES: tuple[str, ...] = tuple(KEYS)
+
+# Plain English for each key, and for the ones that have a look-alike
+# elsewhere on the keyboard, which one this is. Two keys that read the same
+# on their key cap are the single most confusing thing here: they share a
+# virtual-key code, so nothing on screen distinguishes them, yet a game
+# treats them as unrelated.
+LABELS: dict[str, str] = {
+    "Enter": "Enter  (the main one)",
+    "NumpadEnter": "Numpad Enter",
+    "Shift": "Shift  (either side)",
+    "Ctrl": "Ctrl  (either side)",
+    "Alt": "Alt  (either side)",
+    "LeftShift": "Left Shift",
+    "RightShift": "Right Shift",
+    "LeftCtrl": "Left Ctrl",
+    "RightCtrl": "Right Ctrl",
+    "LeftAlt": "Left Alt",
+    "RightAlt": "Right Alt",
+    "NumpadPlus": "Numpad +",
+    "NumpadMinus": "Numpad -",
+    "NumpadMultiply": "Numpad *",
+    "NumpadDivide": "Numpad /",
+    "NumpadPeriod": "Numpad .",
+    "Minus": "-  (main keyboard)",
+    "Equals": "=",
+    "Comma": ",",
+    "Period": ".  (main keyboard)",
+    "Slash": "/  (main keyboard)",
+    "Semicolon": ";",
+    "Apostrophe": "'",
+    "LeftBracket": "[",
+    "RightBracket": "]",
+    "Backslash": "\\",
+    "Backtick": "`",
+    "PageUp": "Page Up",
+    "PageDown": "Page Down",
+    "CapsLock": "Caps Lock",
+    "NumLock": "Num Lock",
+    "PrintScreen": "Print Screen",
+    "Up": "Up arrow",
+    "Down": "Down arrow",
+    "Left": "Left arrow",
+    "Right": "Right arrow",
+    **{f"Numpad{digit}": f"Numpad {digit}" for digit in range(10)},
+    **{str(digit): f"{digit}  (main keyboard)" for digit in range(10)},
+}
+
+# Keys that share their face, and their virtual-key code, with another key.
+# Recording one of these is worth saying out loud, because the two are not
+# interchangeable and the mistake is invisible afterwards.
+TWINS: dict[str, str] = {
+    "Enter": "NumpadEnter", "NumpadEnter": "Enter",
+    "Shift": "LeftShift", "Ctrl": "LeftCtrl", "Alt": "LeftAlt",
+    "LeftShift": "Shift", "RightShift": "Shift",
+    "LeftCtrl": "Ctrl", "RightCtrl": "Ctrl",
+    "LeftAlt": "Alt", "RightAlt": "Alt",
+    **{f"Numpad{digit}": str(digit) for digit in range(10)},
+    **{str(digit): f"Numpad{digit}" for digit in range(10)},
+    "NumpadPlus": "Equals", "NumpadMinus": "Minus",
+    "NumpadDivide": "Slash", "NumpadPeriod": "Period",
+    "Minus": "NumpadMinus", "Period": "NumpadPeriod", "Slash": "NumpadDivide",
+}
+
+
+def label(name: str) -> str:
+    """Plain English for a key name, for showing to somebody."""
+    return LABELS.get(name, name)
 
 
 class _KEYBDINPUT(ctypes.Structure):

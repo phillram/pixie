@@ -132,6 +132,7 @@ def main() -> int:
     failures.extend(_check_click_box())
     failures.extend(_check_keyboard())
     failures.extend(_check_enter_is_the_main_one())
+    failures.extend(_check_look_alike_keys_are_told_apart())
     failures.extend(_check_mouse_movement_is_injected())
     failures.extend(_check_mouse())
 
@@ -2100,6 +2101,76 @@ def _check_enter_is_the_main_one() -> list[str]:
 
     print("Enter identity : main Enter (no E0 prefix), numpad Enter separate")
     return []
+
+
+def _check_look_alike_keys_are_told_apart() -> list[str]:
+    """Keys that appear twice on a keyboard must be separable, and readable.
+
+    Pressing the numpad Enter used to record plain "Enter": the grabber folded
+    the two onto one name, so the interface could not show a difference it had
+    already thrown away. Every key needs to survive being recorded, and every
+    key a person can end up with needs English to show for it.
+    """
+    from pixie.system import keyboard as kb
+    from pixie.ui import app as app_mod
+
+    problems = []
+
+    # _EXTENDED names keys by hand, so it can drift out of step with KEYS and
+    # nothing would say so - a flag set for a key that does not exist simply
+    # never applies to anything. NumLock and PrintScreen sat there unbacked
+    # until this check went in.
+    for name in kb._EXTENDED:
+        if name not in kb.KEYS:
+            problems.append(f"{name} is flagged extended but is not a key, "
+                            "so the flag applies to nothing")
+
+    # Every keysym the grabber recognises must name a key we can actually send.
+    for keysym, name in app_mod.KeyGrabber.TRANSLATE.items():
+        if name not in kb.KEYS:
+            problems.append(f"the grabber maps {keysym} to {name!r}, "
+                            "which is not a key Pixie can send")
+
+    # Nothing may fold two distinct keys onto one name. The number pad is the
+    # exception: it reports a different keysym for the same physical key
+    # depending on Num Lock, so several KP_ names landing on one key is right.
+    folded: dict[str, list[str]] = {}
+    for keysym, name in app_mod.KeyGrabber.TRANSLATE.items():
+        if not keysym.startswith("KP_"):
+            folded.setdefault(name, []).append(keysym)
+    for name, keysyms in folded.items():
+        if len(keysyms) > 1:
+            problems.append(f"{sorted(keysyms)} all record as {name!r}, "
+                            "so they cannot be told apart afterwards")
+
+    # Two keys sharing one label would put us back where we started: the
+    # difference exists, but nothing on screen shows it.
+    shown: dict[str, str] = {}
+    for name in kb.KEYS:
+        text = kb.label(name)
+        if not text:
+            problems.append(f"{name} has no plain English to show")
+        elif text in shown:
+            problems.append(f"{name} and {shown[text]} both read as {text!r}")
+        else:
+            shown[text] = name
+        twin = kb.TWINS.get(name)
+        if twin and twin not in kb.KEYS:
+            problems.append(f"{name}'s twin {twin!r} is not a key at all")
+
+    pairs = [("Enter", "NumpadEnter"), ("LeftCtrl", "RightCtrl"),
+             ("LeftShift", "RightShift"), ("5", "Numpad5")]
+    for one, other in pairs:
+        if one not in kb.KEYS or other not in kb.KEYS:
+            problems.append(f"{one} and {other} are not both keys")
+            continue
+        if kb.label(one) == kb.label(other):
+            problems.append(f"{one} and {other} both read as "
+                            f"{kb.label(one)!r} on screen")
+
+    print(f"Look-alike keys: {len(kb.KEYS)} keys, "
+          f"{len(kb.TWINS)} with a twin, all labelled")
+    return problems
 
 
 def _check_mouse_movement_is_injected() -> list[str]:
