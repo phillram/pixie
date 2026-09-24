@@ -1014,6 +1014,10 @@ class Engine:
         limit = divider.get("wait_limit")
         self.wait_limit = float(limit) if limit else None
         self.park_here = divider.get("park", "inherit") != "off"
+        # Idle laps belong to the section that went round them. Carrying a
+        # count across a hand-over would let one section's quiet spell fire
+        # another section's check, having never run it.
+        self.idle_laps = 0
 
     def _section_pause(self, section: tuple[int, int, str]) -> float:
         """This section's own pause if its divider sets one, else the default."""

@@ -464,6 +464,16 @@ def _check_a_section_that_achieves_nothing() -> list[str]:
         problems.append(f"fired {ran.count('passed')} times in 6 laps - it is "
                         "not resetting its count after acting")
 
+    # Idle laps belong to the section that went round them. A count carried
+    # across a hand-over would let one section's quiet spell fire another
+    # section's check, having never run it once.
+    crossing = Watching(engine_mod.Sequence(name="x"), dry_run=True)
+    crossing.idle_laps = 4
+    crossing._enter_section((0, 1, "somewhere else"))
+    if crossing.idle_laps != 0:
+        problems.append(f"entering a section inherited {crossing.idle_laps} "
+                        "idle laps from the one before it")
+
     # The count itself: three idle laps, then it has something to report.
     solo = Watching(engine_mod.Sequence(name="x"), dry_run=True)
     outcomes = []
