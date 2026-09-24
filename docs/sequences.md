@@ -290,6 +290,15 @@ loop of seven steps where two click, skipping the other five saves more than
 every timeout in the loop put together. A step with its own pause still takes
 it.
 
+`Gap between repeats` covers the inside of a step rather than the space around
+it: between the two clicks of a double-click, and between repeated taps of one
+key step. It defaults to 0.05 to 0.12 seconds and is drawn fresh for every gap,
+so no double-click is the same length as the last. Keep it under half a second
+or two clicks stop reading as a double-click.
+
+Every one of these has a per-step override, and the box says which
+sequence-wide value it would use if you left it alone.
+
 ## The cursor
 
 `After each step` sends the cursor somewhere harmless so it cannot sit over the

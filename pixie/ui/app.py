@@ -204,6 +204,11 @@ class SettingsDialog:
          "One cycle is one trip through every section. This is waited at the "
          "end of that trip, before the sequence starts again from its very "
          "first step."),
+        ("repeat_gap", "Gap between repeats",
+         "Between the clicks of a double-click, and between repeated taps of "
+         "one key step. Drawn fresh every time, so no two are the same "
+         "length. Keep it under half a second or two clicks stop reading as "
+         "a double-click."),
     )
 
     def __init__(self, parent: tk.Misc, settings: engine_mod.Settings,
@@ -1674,13 +1679,12 @@ class App:
         holder.grid(row=row, column=1, columnspan=2, sticky="w", pady=4)
 
         settings = self.sequence.settings
-        # A section's pause overrides the between-sections default, not the
-        # between-steps one, so it must quote the right number back at you.
-        if step.get("type") == "section":
-            default_text = _range_text(settings.section_pause_min,
-                                       settings.section_pause_max)
-        else:
-            default_text = _range_text(settings.step_pause_min, settings.step_pause_max)
+        # Which sequence-wide range this one overrides is declared on the
+        # field. Working it out from the step type meant every new field of
+        # this kind quoted the step pause at you, whatever it actually used.
+        prefix = spec.falls_back_to or "step_pause"
+        default_text = _range_text(getattr(settings, f"{prefix}_min"),
+                                   getattr(settings, f"{prefix}_max"))
         use_default = tk.BooleanVar(value=value is None)
         low = tk.StringVar(value=str(value[0]) if value else "0.5")
         high = tk.StringVar(value=str(value[1]) if value else "1.5")

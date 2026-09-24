@@ -73,6 +73,11 @@ class Settings:
     section_pause_max: float = 0.0
     cycle_pause_min: float = 1.0
     cycle_pause_max: float = 1.0
+    # Between repeated clicks of one click step, and repeated taps of one key
+    # step. Well under the system double-click time, so two clicks still read
+    # as a double-click, but no two of them the same length.
+    repeat_gap_min: float = 0.05
+    repeat_gap_max: float = 0.12
     failsafe_corner: bool = True
     # Where to send the cursor after each step: "off", "center" (middle of the
     # primary monitor) or "custom" (park_box).
@@ -179,6 +184,14 @@ class Sequence:
             # as it did - the new, tighter default is for new steps only.
             if "join" in step and "join_across" not in step:
                 step["join_across"] = step["join"]
+            # The gap between repeated key presses used to be one fixed
+            # number. A number is a range of zero width, so a sequence saved
+            # before this goes on tapping at exactly the pace it always did.
+            if "interval" in step and "gap" not in step:
+                gap = step.pop("interval")
+                if gap is not None:
+                    step["gap"] = [float(gap), float(gap)]
+            step.pop("interval", None)
         return steps
 
     def save(self, path: str | Path | None = None) -> Path:
@@ -464,7 +477,8 @@ class Engine:
         # cannot drift out of step with what actually happened.
         self.acted = True
         if not self.dry_run:
-            mouse.click(x, y, button=button, clicks=clicks)
+            mouse.click(x, y, button=button, clicks=clicks,
+                        interval=self._repeat_gap(step))
 
     # -- step handlers ---------------------------------------------------
 
@@ -937,8 +951,7 @@ class Engine:
         times = f" x{presses}" if presses > 1 else ""
         self.log(f"    press {keyboard.label(key)}{times}{suffix}")
         if not self.dry_run:
-            keyboard.press(key, presses,
-                           float(self._value(step, "interval", 0.08)),
+            keyboard.press(key, presses, self._repeat_gap(step),
                            float(self._value(step, "hold", 0.05)))
         self.acted = True
         return "ok"
@@ -991,6 +1004,22 @@ class Engine:
         self._sleep(pause)
         return "ok"
 
+
+    def _repeat_gap(self, step: dict[str, Any]) -> Callable[[], float]:
+        """How long to leave between repeated clicks, or repeated key taps.
+
+        Handed over as a function rather than a number so that every gap in a
+        run is drawn on its own. A fixed number made a triple click the same
+        gap three times, and every double click in a session identical to the
+        millisecond, which is not what a hand does.
+        """
+        own = step.get("gap")
+        if own:
+            low, high = float(own[0]), float(own[1])
+        else:
+            settings = self.sequence.settings
+            low, high = settings.repeat_gap_min, settings.repeat_gap_max
+        return lambda: _between(low, high)
 
     def _pause_after(self, step: dict[str, Any]) -> float:
         """This step's own pause if it has one, otherwise the sequence default."""

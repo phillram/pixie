@@ -345,6 +345,24 @@ def _image_fields(on_timeout: str) -> tuple[Field, ...]:
     )
 
 
+_GAP_HINT = (
+    "How long to leave between one click and the next, when this step clicks "
+    "more than once.\n"
+    "Drawn fresh for every gap, so a double click is never twice the same "
+    "length. Keep it under half a second or two clicks stop reading as a "
+    "double-click."
+)
+_CLICK_GAP_FIELD = Field(
+    "gap", "pause", "Gap between clicks", None,
+    falls_back_to="repeat_gap", hint=_GAP_HINT,
+)
+_KEY_GAP_FIELD = Field(
+    "gap", "pause", "Gap between taps", None, falls_back_to="repeat_gap",
+    hint="How long to leave between one tap and the next, when 'How many "
+         "taps' is above 1.\nDrawn fresh for every gap, so no two are the "
+         "same length.",
+)
+
 _OFFSET_HINT = (
     "Where to click relative to the middle of what was found, in pixels.\n"
     "X: positive = right, negative = left.   Y: positive = DOWN, negative = up.\n"
@@ -355,10 +373,11 @@ _OFFSET_HINT = (
 # How to click. Steps that click a fixed spot or a box take only these.
 _BUTTON_FIELDS: tuple[Field, ...] = (
     Field("clicks", "integer", "How many clicks", 1,
-          hint="2 for a double-click: two clicks 60ms apart, which is well "
-               "inside Windows' double-click time, so the application reads "
-               "them as one double-click."),
+          hint="2 for a double-click. The gap between them is set below, and "
+               "stays well inside Windows' double-click time, so the "
+               "application reads them as one double-click."),
     Field("button", "choice", "Which mouse button", "left", choices=BUTTONS),
+    _CLICK_GAP_FIELD,
 )
 
 _AIM_FIELD = Field("anchor", "choice", "Aim at", "middle", choices=ANCHORS,
@@ -386,7 +405,7 @@ STEP_TYPES: dict[str, StepType] = {
               "below apply to every step in this section.",
         fields=(
             Field("pause", "pause", "Pause when this section ends", None,
-                  hint=_SECTION_PAUSE_HINT),
+                  falls_back_to="section_pause", hint=_SECTION_PAUSE_HINT),
             Field("wait_limit", "limit", "Cap every wait in here at (s)", None,
                   hint=_SECTION_LIMIT_HINT),
             Field("park", "choice", "Cursor after a click in here", "inherit",
@@ -636,8 +655,7 @@ STEP_TYPES: dict[str, StepType] = {
                        "from their twins on the main keyboard."),
             Field("presses", "integer", "How many taps", 1, minimum=1, maximum=50,
                   hint="How many separate taps. 2 = press it twice."),
-            Field("interval", "number", "Gap between taps (s)", 0.08,
-                  hint="Raise this if the application misses the second press."),
+            _KEY_GAP_FIELD,
             Field("hold", "number", "Hold each tap for (s)", 0.05,
                   hint="How long the key stays down. Games that check the "
                        "keyboard once a frame can miss a tap shorter than "
@@ -666,7 +684,7 @@ STEP_TYPES: dict[str, StepType] = {
 # Every step can override the sequence-wide pause, so the field is appended to
 # all of them here rather than repeated in each definition above.
 _PAUSE_FIELD = Field(
-    "pause", "pause", "Pause after this step", None,
+    "pause", "pause", "Pause after this step", None, falls_back_to="step_pause",
     hint="Replaces the sequence-wide pause for this step only - the two are "
          "never added together. Use it when one step needs different timing: "
          "a slow animation to finish, or a menu to open. Set it to 0 and 0 for "

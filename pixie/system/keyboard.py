@@ -10,6 +10,7 @@ from __future__ import annotations
 import ctypes
 import time
 from ctypes import wintypes
+from typing import Callable
 
 _user32 = ctypes.windll.user32
 
@@ -223,7 +224,8 @@ def normalize(name: str) -> str:
     raise ValueError(f"Unknown key {name!r}. Known keys: {', '.join(KEY_NAMES)}")
 
 
-def press(name: str, presses: int = 1, interval: float = 0.08,
+def press(name: str, presses: int = 1,
+          interval: float | Callable[[], float] = 0.08,
           hold: float = 0.05) -> None:
     """Tap a key. `presses` is how many separate taps, `hold` how long each lasts.
 
@@ -238,7 +240,7 @@ def press(name: str, presses: int = 1, interval: float = 0.08,
 
     for n in range(max(1, int(presses))):
         if n:
-            time.sleep(interval)
+            time.sleep(interval() if callable(interval) else interval)
         _send(vk, scan, flags)
         time.sleep(hold)
         _send(vk, scan, flags | KEYEVENTF_KEYUP)

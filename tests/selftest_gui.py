@@ -122,7 +122,7 @@ def check_typing_does_not_steal_focus():
     samples = {
         "section": ("name", "Screen One"),
         "note": ("text", "why this exists"),
-        "press_key": ("interval", "0.25"),
+        "press_key": ("hold", "0.25"),
         "click_point": ("clicks", "2"),
         "wait": ("seconds", "1.75"),
     }

@@ -10,6 +10,7 @@ import ctypes
 import math
 import time
 from ctypes import wintypes
+from typing import Callable
 
 _user32 = ctypes.windll.user32
 
@@ -144,15 +145,19 @@ def click(
     y: int,
     button: str = "left",
     clicks: int = 1,
-    interval: float = 0.06,
+    interval: float | Callable[[], float] = 0.06,
     settle: float = 0.05,
 ) -> None:
     """Move to (x, y) and click.
 
     `settle` gives the target application a moment to register the hover --
-    tooltips and hover states often need it. `interval` is the gap between
-    clicks; keep it under the system double-click time (500ms by default)
-    if you want `clicks=2` to read as a double-click.
+    tooltips and hover states often need it.
+
+    `interval` is the gap between clicks, and may be a function returning one,
+    so that each gap in a run of clicks can be drawn separately instead of
+    every double click in a session being identical to the millisecond. Keep
+    it under the system double-click time (500ms by default) if you want
+    `clicks=2` to read as a double-click.
     """
     if button not in _BUTTONS:
         raise ValueError(f"Unknown button {button!r}. Use left, right or middle.")
@@ -162,7 +167,7 @@ def click(
     down, up = _BUTTONS[button]
     for n in range(clicks):
         if n:
-            time.sleep(interval)
+            time.sleep(interval() if callable(interval) else interval)
         _send(down)
         time.sleep(0.02)
         _send(up)

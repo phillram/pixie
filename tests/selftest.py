@@ -134,6 +134,7 @@ def main() -> int:
     failures.extend(_check_enter_is_the_main_one())
     failures.extend(_check_look_alike_keys_are_told_apart())
     failures.extend(_check_how_often_it_looks())
+    failures.extend(_check_repeats_are_not_metronomic())
     failures.extend(_check_nothing_grows_forever_during_a_run())
     failures.extend(_check_a_bad_stop_key_does_not_kill_the_run())
     failures.extend(_check_tidying_never_deletes_a_picture_in_use())
@@ -2195,6 +2196,83 @@ def _check_enter_is_the_main_one() -> list[str]:
 
     print("Enter identity : main Enter (no E0 prefix), numpad Enter separate")
     return []
+
+
+def _check_repeats_are_not_metronomic() -> list[str]:
+    """Repeated clicks and taps take their gap from a range, drawn each time.
+
+    A double-click was 60ms, written into mouse.py and never passed by the
+    engine, so every double-click in a session was identical to the
+    millisecond. A repeated key press was editable but a single fixed number,
+    so its gaps were identical to each other.
+
+    The gap is handed over as a function rather than a number, which is what
+    makes each one in a run its own draw rather than the same one repeated.
+    """
+    from pixie.system import keyboard as kb
+    from pixie.system import mouse as mouse_mod
+
+    problems = []
+    runner = engine_mod.Engine(engine_mod.Sequence(name="x"), dry_run=False)
+
+    def gaps_from(stamps):
+        return [(b - a) * 1000 for a, b in zip(stamps[::2], stamps[2::2])]
+
+    # Clicks. The measured gap is press-to-press, so it carries the 20ms the
+    # button is held down as well as the gap itself.
+    sent: list[float] = []
+    real_send, real_move = mouse_mod._send, mouse_mod.move_to
+    mouse_mod._send = lambda *_a, **_k: sent.append(time.perf_counter())
+    mouse_mod.move_to = lambda *_a: None
+    try:
+        step = {"type": "click_point", "clicks": 6}
+        mouse_mod.click(0, 0, clicks=6, interval=runner._repeat_gap(step),
+                        settle=0)
+        clicks = gaps_from(sent)
+
+        sent.clear()
+        step["gap"] = [0.25, 0.35]
+        mouse_mod.click(0, 0, clicks=4, interval=runner._repeat_gap(step),
+                        settle=0)
+        own = gaps_from(sent)
+    finally:
+        mouse_mod._send, mouse_mod.move_to = real_send, real_move
+
+    if len({round(gap) for gap in clicks}) < 2:
+        problems.append(f"six clicks were spaced identically ({clicks}), so "
+                        "the gap is not being drawn per click")
+    if not all(50 - 12 <= gap <= 120 + 30 for gap in clicks):
+        problems.append(f"click gaps {[round(g) for g in clicks]}ms fall "
+                        "outside the sequence default of 50-120ms")
+    if not all(250 - 12 <= gap <= 350 + 30 for gap in own):
+        problems.append(f"a step asking for 250-350ms got "
+                        f"{[round(g) for g in own]}ms, so its own range is "
+                        "not being used")
+
+    # Key taps, where nothing is held down, so the gap is the gap.
+    taps: list[float] = []
+    real_key = kb._send
+    kb._send = lambda *_a: taps.append(time.perf_counter())
+    try:
+        kb.press("Q", 6, runner._repeat_gap({"type": "press_key"}), hold=0)
+    finally:
+        kb._send = real_key
+    key_gaps = gaps_from(taps)
+    if len({round(gap) for gap in key_gaps}) < 2:
+        problems.append(f"six taps were spaced identically ({key_gaps})")
+    if not all(50 - 12 <= gap <= 120 + 15 for gap in key_gaps):
+        problems.append(f"tap gaps {[round(g) for g in key_gaps]}ms fall "
+                        "outside the sequence default of 50-120ms")
+
+    # A file written before the gap was a range keeps the pace it had.
+    older = engine_mod.Sequence._migrate(
+        [{"type": "press_key", "key": "Q", "interval": 0.08}])
+    if older[0].get("gap") != [0.08, 0.08] or "interval" in older[0]:
+        problems.append(f"an older file did not carry its gap over: {older}")
+
+    print(f"Repeat gaps     : clicks {[round(g) for g in clicks]}ms, "
+          f"taps {[round(g) for g in key_gaps]}ms, none the same twice")
+    return problems
 
 
 def _check_nothing_grows_forever_during_a_run() -> list[str]:
