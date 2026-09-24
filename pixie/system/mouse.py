@@ -96,6 +96,15 @@ GLIDE_STEP = 24
 GLIDE_MAX_STEPS = 60
 
 
+def _moment(value: float | Callable[[], float]) -> float:
+    """A delay that may be a number, or a function returning a fresh one.
+
+    Callers that want every occurrence to differ pass the function; callers
+    that want one length pass the number.
+    """
+    return float(value() if callable(value) else value)
+
+
 def settle() -> None:
     """A pixel of movement in place, and back.
 
@@ -110,7 +119,7 @@ def settle() -> None:
 
 
 def glide_to(x: int, y: int, seconds: float = 0.25) -> None:
-    """Travel to (x, y) instead of appearing there.
+    """Travel to (x, y) over `seconds` instead of appearing there.
 
     Warping the cursor is one event: the pointer is somewhere, then it is
     somewhere else, having crossed nothing. Applications that track hover
@@ -118,6 +127,11 @@ def glide_to(x: int, y: int, seconds: float = 0.25) -> None:
     where it was. Moving in steps looks to them like an ordinary hand.
 
     Eased at both ends, because a constant-speed slide is its own tell.
+
+    `seconds` is the whole journey however far it is, so the caller has to
+    scale it by distance. Leaving that to a default here is what made a 40px
+    nudge and a 7000px sweep both take a quarter of a second, the second of
+    them at twenty-four thousand pixels a second.
     """
     from_x, from_y = position()
     x, y = int(x), int(y)
@@ -146,32 +160,35 @@ def click(
     button: str = "left",
     clicks: int = 1,
     interval: float | Callable[[], float] = 0.06,
-    settle: float = 0.05,
+    before: float | Callable[[], float] = 0.05,
+    hold: float | Callable[[], float] = 0.02,
 ) -> None:
     """Move to (x, y) and click.
 
-    `settle` gives the target application a moment to register the hover --
-    tooltips and hover states often need it.
+    Three delays, any of which may be a function so that no two clicks are
+    timed alike:
 
-    `interval` is the gap between clicks, and may be a function returning one,
-    so that each gap in a run of clicks can be drawn separately instead of
-    every double click in a session being identical to the millisecond. Keep
-    it under the system double-click time (500ms by default) if you want
+    `before` is the wait between arriving and pressing. Some applications
+    will not accept a click until they have noticed the pointer arrive, and
+    process it against wherever the cursor was before otherwise.
+
+    `hold` is how long the button stays down.
+
+    `interval` is the gap between clicks when there is more than one. Keep it
+    under the system double-click time (500ms by default) if you want
     `clicks=2` to read as a double-click.
+
+    The first was named `settle` and shadowed the settle() function below.
     """
     if button not in _BUTTONS:
         raise ValueError(f"Unknown button {button!r}. Use left, right or middle.")
 
     move_to(x, y)
-    time.sleep(settle)
+    time.sleep(_moment(before))
     down, up = _BUTTONS[button]
     for n in range(clicks):
         if n:
-            time.sleep(interval() if callable(interval) else interval)
+            time.sleep(_moment(interval))
         _send(down)
-        time.sleep(0.02)
+        time.sleep(_moment(hold))
         _send(up)
-
-
-def double_click(x: int, y: int, button: str = "left") -> None:
-    click(x, y, button=button, clicks=2, interval=0.06)

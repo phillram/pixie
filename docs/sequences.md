@@ -290,14 +290,22 @@ loop of seven steps where two click, skipping the other five saves more than
 every timeout in the loop put together. A step with its own pause still takes
 it.
 
-`Gap between repeats` covers the inside of a step rather than the space around
-it: between the two clicks of a double-click, and between repeated taps of one
-key step. It defaults to 0.05 to 0.12 seconds and is drawn fresh for every gap,
-so no double-click is the same length as the last. Keep it under half a second
-or two clicks stop reading as a double-click.
+Three more cover the inside of a step rather than the space around it, and
+each is drawn fresh every time, so no two presses are alike:
 
-Every one of these has a per-step override, and the box says which
-sequence-wide value it would use if you left it alone.
+| Setting | Default | What it covers |
+| --- | --- | --- |
+| Gap between repeats | 0.05-0.12s | Between the clicks of a double-click, or repeated taps of one key step |
+| How long a press lasts | 0.02-0.06s | How long a mouse button or key stays down |
+| Pause before pressing | 0.03-0.08s | Between the cursor arriving and the button going down |
+
+Keep the gap under half a second or two clicks stop reading as a double-click.
+Raise the hold if an application seems to miss presses entirely; some sample
+input once a frame and can step over a short one.
+
+The pause after a step, the gap between repeats and the press length all have
+a per-step override, and the box says which sequence-wide value it would use
+if you left it alone.
 
 ## The cursor
 
@@ -306,8 +314,9 @@ next thing Pixie looks at. Two settings:
 
 * **Pick area...** drags a box instead of one spot, and the cursor lands
   somewhere different inside it every time.
-* **Move the cursor there rather than warping it** travels over about a quarter
-  of a second, eased at both ends.
+* **Move the cursor there rather than warping it** travels at `Cursor travel
+  speed`, eased at both ends. A speed rather than a duration, so a long move
+  takes longer than a short one; capped at 0.8 seconds however far it goes.
 
 Movement is sent as genuine input, the same way clicks are. A warped cursor
 generates no input at all, so a game never learns the pointer moved and carries

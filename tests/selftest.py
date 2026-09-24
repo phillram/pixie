@@ -135,6 +135,8 @@ def main() -> int:
     failures.extend(_check_look_alike_keys_are_told_apart())
     failures.extend(_check_how_often_it_looks())
     failures.extend(_check_repeats_are_not_metronomic())
+    failures.extend(_check_every_delay_around_a_press_varies())
+    failures.extend(_check_cursor_travel_scales_with_distance())
     failures.extend(_check_nothing_grows_forever_during_a_run())
     failures.extend(_check_a_bad_stop_key_does_not_kill_the_run())
     failures.extend(_check_tidying_never_deletes_a_picture_in_use())
@@ -2218,8 +2220,8 @@ def _check_repeats_are_not_metronomic() -> list[str]:
     def gaps_from(stamps):
         return [(b - a) * 1000 for a, b in zip(stamps[::2], stamps[2::2])]
 
-    # Clicks. The measured gap is press-to-press, so it carries the 20ms the
-    # button is held down as well as the gap itself.
+    # Clicks, with the button held for no time at all, so what is measured
+    # is the gap and nothing else.
     sent: list[float] = []
     real_send, real_move = mouse_mod._send, mouse_mod.move_to
     mouse_mod._send = lambda *_a, **_k: sent.append(time.perf_counter())
@@ -2227,13 +2229,13 @@ def _check_repeats_are_not_metronomic() -> list[str]:
     try:
         step = {"type": "click_point", "clicks": 6}
         mouse_mod.click(0, 0, clicks=6, interval=runner._repeat_gap(step),
-                        settle=0)
+                        before=0, hold=0)
         clicks = gaps_from(sent)
 
         sent.clear()
         step["gap"] = [0.25, 0.35]
         mouse_mod.click(0, 0, clicks=4, interval=runner._repeat_gap(step),
-                        settle=0)
+                        before=0, hold=0)
         own = gaps_from(sent)
     finally:
         mouse_mod._send, mouse_mod.move_to = real_send, real_move
@@ -2241,10 +2243,10 @@ def _check_repeats_are_not_metronomic() -> list[str]:
     if len({round(gap) for gap in clicks}) < 2:
         problems.append(f"six clicks were spaced identically ({clicks}), so "
                         "the gap is not being drawn per click")
-    if not all(50 - 12 <= gap <= 120 + 30 for gap in clicks):
+    if not all(50 - 12 <= gap <= 120 + 15 for gap in clicks):
         problems.append(f"click gaps {[round(g) for g in clicks]}ms fall "
                         "outside the sequence default of 50-120ms")
-    if not all(250 - 12 <= gap <= 350 + 30 for gap in own):
+    if not all(250 - 12 <= gap <= 350 + 15 for gap in own):
         problems.append(f"a step asking for 250-350ms got "
                         f"{[round(g) for g in own]}ms, so its own range is "
                         "not being used")
@@ -2272,6 +2274,128 @@ def _check_repeats_are_not_metronomic() -> list[str]:
 
     print(f"Repeat gaps     : clicks {[round(g) for g in clicks]}ms, "
           f"taps {[round(g) for g in key_gaps]}ms, none the same twice")
+    return problems
+
+
+def _check_every_delay_around_a_press_varies() -> list[str]:
+    """Nothing about a click should be the same length twice.
+
+    A click has four timings: arriving before pressing, the button held down,
+    the gap to the next click, and that one held down. Three of the four were
+    written into mouse.py as literals the engine never passed, so every click
+    Pixie made carried an identical signature either side of the one gap that
+    did vary.
+    """
+    from pixie.system import keyboard as kb
+    from pixie.system import mouse as mouse_mod
+
+    problems = []
+    runner = engine_mod.Engine(engine_mod.Sequence(name="x"), dry_run=False)
+    stamps: list[float] = []
+    real_send, real_move = mouse_mod._send, mouse_mod.move_to
+    mouse_mod._send = lambda *_a, **_k: stamps.append(time.perf_counter())
+    mouse_mod.move_to = lambda *_a: stamps.append(time.perf_counter())
+
+    arrivals, holds = [], []
+    try:
+        step = {"type": "click_point", "clicks": 1}
+        for _attempt in range(6):
+            stamps.clear()
+            mouse_mod.click(0, 0, clicks=1, before=runner._settle_before(),
+                            hold=runner._press_hold(step))
+            arrivals.append((stamps[1] - stamps[0]) * 1000)
+            holds.append((stamps[2] - stamps[1]) * 1000)
+
+        # A step's own hold beats the sequence-wide one.
+        stamps.clear()
+        step["hold"] = [0.30, 0.34]
+        mouse_mod.click(0, 0, clicks=1, before=runner._settle_before(),
+                        hold=runner._press_hold(step))
+        own = (stamps[2] - stamps[1]) * 1000
+    finally:
+        mouse_mod._send, mouse_mod.move_to = real_send, real_move
+
+    settings = runner.sequence.settings
+    for name, measured, low, high in (
+            ("arrive-before-pressing", arrivals,
+             settings.press_settle_min, settings.press_settle_max),
+            ("button held down", holds,
+             settings.press_hold_min, settings.press_hold_max)):
+        if len({round(value) for value in measured}) < 2:
+            problems.append(f"{name} was the same on all six clicks "
+                            f"({[round(v) for v in measured]}ms)")
+        if not all(low * 1000 - 12 <= value <= high * 1000 + 20
+                   for value in measured):
+            problems.append(f"{name} came out {[round(v) for v in measured]}ms, "
+                            f"outside {low * 1000:.0f}-{high * 1000:.0f}ms")
+    if not 290 <= own <= 365:
+        problems.append(f"a step asking to hold 300-340ms held {own:.0f}ms")
+
+    # Keys use the same range, so a tap is held like a button.
+    taps: list[float] = []
+    real_key = kb._send
+    kb._send = lambda *_a: taps.append(time.perf_counter())
+    try:
+        kb.press("Q", 5, runner._repeat_gap({}), runner._press_hold({}))
+    finally:
+        kb._send = real_key
+    tap_holds = [(b - a) * 1000 for a, b in zip(taps[::2], taps[1::2])]
+    if len({round(value) for value in tap_holds}) < 2:
+        problems.append(f"five taps were all held the same ({tap_holds}ms)")
+
+    # A file written when the hold was one number keeps that length exactly.
+    older = engine_mod.Sequence._migrate([{"type": "press_key", "hold": 0.1}])
+    if older[0].get("hold") != [0.1, 0.1]:
+        problems.append(f"an older file lost its hold: {older[0].get('hold')!r}")
+
+    print(f"Press timing    : arrive {[round(v) for v in arrivals[:4]]}ms, "
+          f"held {[round(v) for v in holds[:4]]}ms, none repeated")
+    return problems
+
+
+def _check_cursor_travel_scales_with_distance() -> list[str]:
+    """A long move must take longer than a short one.
+
+    The glide divided a fixed quarter of a second by however many steps the
+    distance needed, so the duration was the same whatever the distance and
+    the *speed* was whatever fell out: 159 pixels a second across 40px, and
+    24,000 across a two-monitor desktop. Speed is drawn now, and the duration
+    follows the distance.
+    """
+    from pixie.system import mouse as mouse_mod
+
+    problems = []
+    runner = engine_mod.Engine(engine_mod.Sequence(name="x"), dry_run=False)
+    real_send, real_pos = mouse_mod._send, mouse_mod.position
+    mouse_mod._send = lambda *_a, **_k: None
+    mouse_mod.position = lambda: (0, 0)
+    try:
+        times = {}
+        for distance in (50, 500, 3000):
+            drawn = [runner._travel_time(distance, 0) for _ in range(8)]
+            times[distance] = drawn
+    finally:
+        mouse_mod._send, mouse_mod.position = real_send, real_pos
+
+    short, medium, far = (sum(times[d]) / len(times[d]) for d in (50, 500, 3000))
+    if not short < medium < far:
+        problems.append(f"travel time does not follow distance: 50px took "
+                        f"{short:.3f}s, 500px {medium:.3f}s, 3000px {far:.3f}s")
+    if len({round(value, 4) for value in times[500]}) < 2:
+        problems.append("every 500px move took exactly the same time")
+    for distance, drawn in times.items():
+        for value in drawn:
+            if not engine_mod.TRAVEL_MIN_SECONDS <= value <= engine_mod.TRAVEL_MAX_SECONDS:
+                problems.append(f"a {distance}px move was given {value:.3f}s, "
+                                "outside the clamps")
+                break
+    # The speed a long move ends up at must at least be in the realm of a hand.
+    fastest = 3000 / min(times[3000])
+    if fastest > 20000:
+        problems.append(f"a 3000px move still crosses at {fastest:.0f} px/sec")
+
+    print(f"Cursor travel   : 50px {short * 1000:.0f}ms, 500px "
+          f"{medium * 1000:.0f}ms, 3000px {far * 1000:.0f}ms")
     return problems
 
 
@@ -2680,7 +2804,9 @@ def _check_mouse() -> list[str]:
 
     restore_to = ms.position()
     target = (root.winfo_rootx() + 130, root.winfo_rooty() + 70)
-    ms.double_click(*target)
+    # Two clicks close enough together that Windows reads them as one
+    # double-click. The gap is the sequence default, well inside its limit.
+    ms.click(*target, clicks=2, interval=0.06)
 
     deadline = time.time() + 3.0
     while time.time() < deadline and "double" not in events:

@@ -30,6 +30,11 @@ IDLE_NOTICE_SECONDS = 15.0  # how often to say 'still waiting' while idling
 # back far smaller than usual. Enough for a steady median, small enough that
 # a run lasting days costs no more than one lasting minutes.
 MATCH_HISTORY = 50
+# However far the cursor has to go, a journey shorter than this looks like a
+# twitch and one longer than this is just time spent watching it. Distance
+# divided by speed is clamped between them.
+TRAVEL_MIN_SECONDS = 0.05
+TRAVEL_MAX_SECONDS = 0.8
 
 # Every level `log` may be called with. The GUI colors them, and
 # tools/check_wiring.py fails if it has no color for one of these.
@@ -78,6 +83,19 @@ class Settings:
     # as a double-click, but no two of them the same length.
     repeat_gap_min: float = 0.05
     repeat_gap_max: float = 0.12
+    # How long a mouse button or a key stays down.
+    press_hold_min: float = 0.02
+    press_hold_max: float = 0.06
+    # Between the cursor arriving somewhere and the button going down. Some
+    # applications will not take a click until they have noticed the pointer
+    # arrive, and act on the one before it otherwise.
+    press_settle_min: float = 0.03
+    press_settle_max: float = 0.08
+    # How fast the cursor travels when it is set to move rather than warp,
+    # in pixels a second. A speed rather than a duration, because a fixed
+    # duration makes a long move absurdly fast and a short one absurdly slow.
+    travel_speed_min: float = 2000.0
+    travel_speed_max: float = 4000.0
     failsafe_corner: bool = True
     # Where to send the cursor after each step: "off", "center" (middle of the
     # primary monitor) or "custom" (park_box).
@@ -192,6 +210,10 @@ class Sequence:
                 if gap is not None:
                     step["gap"] = [float(gap), float(gap)]
             step.pop("interval", None)
+            # How long a key was held was a single number too. Same treatment:
+            # a range of zero width holds it for exactly as long as it did.
+            if isinstance(step.get("hold"), (int, float)):
+                step["hold"] = [float(step["hold"]), float(step["hold"])]
         return steps
 
     def save(self, path: str | Path | None = None) -> Path:
@@ -478,7 +500,9 @@ class Engine:
         self.acted = True
         if not self.dry_run:
             mouse.click(x, y, button=button, clicks=clicks,
-                        interval=self._repeat_gap(step))
+                        interval=self._repeat_gap(step),
+                        before=self._settle_before(),
+                        hold=self._press_hold(step))
 
     # -- step handlers ---------------------------------------------------
 
@@ -952,7 +976,7 @@ class Engine:
         self.log(f"    press {keyboard.label(key)}{times}{suffix}")
         if not self.dry_run:
             keyboard.press(key, presses, self._repeat_gap(step),
-                           float(self._value(step, "hold", 0.05)))
+                           self._press_hold(step))
         self.acted = True
         return "ok"
 
@@ -1021,6 +1045,37 @@ class Engine:
             low, high = settings.repeat_gap_min, settings.repeat_gap_max
         return lambda: _between(low, high)
 
+    def _press_hold(self, step: dict[str, Any]) -> Callable[[], float]:
+        """How long a mouse button or a key stays down, drawn per press."""
+        own = step.get("hold")
+        if own:
+            low, high = float(own[0]), float(own[1])
+        else:
+            settings = self.sequence.settings
+            low, high = settings.press_hold_min, settings.press_hold_max
+        return lambda: _between(low, high)
+
+    def _settle_before(self) -> Callable[[], float]:
+        """How long to wait after arriving somewhere before pressing."""
+        settings = self.sequence.settings
+        low, high = settings.press_settle_min, settings.press_settle_max
+        return lambda: _between(low, high)
+
+    def _travel_time(self, to_x: int, to_y: int) -> float:
+        """How long the cursor should take to reach a point.
+
+        Drawn as a speed and divided by the distance, not taken as a
+        duration. A fixed duration meant a 40px nudge and a sweep across two
+        monitors both took a quarter of a second, the second of them at
+        twenty-four thousand pixels a second, which is nothing like a hand.
+        """
+        from_x, from_y = mouse.position()
+        distance = math.hypot(to_x - from_x, to_y - from_y)
+        settings = self.sequence.settings
+        speed = _between(settings.travel_speed_min, settings.travel_speed_max)
+        seconds = distance / max(1.0, speed)
+        return min(TRAVEL_MAX_SECONDS, max(TRAVEL_MIN_SECONDS, seconds))
+
     def _pause_after(self, step: dict[str, Any]) -> float:
         """This step's own pause if it has one, otherwise the sequence default."""
         custom = step.get("pause")
@@ -1056,7 +1111,7 @@ class Engine:
         if target is None or self.dry_run:
             return
         if self.sequence.settings.park_glide:
-            mouse.glide_to(*target)
+            mouse.glide_to(*target, seconds=self._travel_time(*target))
         else:
             mouse.move_to(*target)
         # Parking exists to get the cursor off whatever it was over. Landing

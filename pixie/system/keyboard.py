@@ -226,7 +226,7 @@ def normalize(name: str) -> str:
 
 def press(name: str, presses: int = 1,
           interval: float | Callable[[], float] = 0.08,
-          hold: float = 0.05) -> None:
+          hold: float | Callable[[], float] = 0.05) -> None:
     """Tap a key. `presses` is how many separate taps, `hold` how long each lasts.
 
     `hold` matters for applications that check the keyboard once a frame rather
@@ -242,5 +242,5 @@ def press(name: str, presses: int = 1,
         if n:
             time.sleep(interval() if callable(interval) else interval)
         _send(vk, scan, flags)
-        time.sleep(hold)
+        time.sleep(float(hold() if callable(hold) else hold))
         _send(vk, scan, flags | KEYEVENTF_KEYUP)

@@ -352,6 +352,24 @@ _GAP_HINT = (
     "length. Keep it under half a second or two clicks stop reading as a "
     "double-click."
 )
+_HOLD_HINT = (
+    "How long the button stays down, drawn fresh for every press so no two "
+    "are the same length.\n"
+    "Raise it if the application seems to miss the click entirely: a few "
+    "applications sample the mouse once a frame and can step over a press "
+    "that goes down and up between two looks."
+)
+_CLICK_HOLD_FIELD = Field(
+    "hold", "pause", "Hold the button for", None,
+    falls_back_to="press_hold", hint=_HOLD_HINT,
+)
+_KEY_HOLD_FIELD = Field(
+    "hold", "pause", "Hold each tap for", None, falls_back_to="press_hold",
+    hint="How long the key stays down, drawn fresh for every tap.\n"
+         "Games usually check the keyboard once a frame, and a tap that "
+         "starts and finishes between two checks never happened as far as "
+         "they are concerned. Raise it if a press goes nowhere.",
+)
 _CLICK_GAP_FIELD = Field(
     "gap", "pause", "Gap between clicks", None,
     falls_back_to="repeat_gap", hint=_GAP_HINT,
@@ -378,6 +396,7 @@ _BUTTON_FIELDS: tuple[Field, ...] = (
                "application reads them as one double-click."),
     Field("button", "choice", "Which mouse button", "left", choices=BUTTONS),
     _CLICK_GAP_FIELD,
+    _CLICK_HOLD_FIELD,
 )
 
 _AIM_FIELD = Field("anchor", "choice", "Aim at", "middle", choices=ANCHORS,
@@ -656,11 +675,7 @@ STEP_TYPES: dict[str, StepType] = {
             Field("presses", "integer", "How many taps", 1, minimum=1, maximum=50,
                   hint="How many separate taps. 2 = press it twice."),
             _KEY_GAP_FIELD,
-            Field("hold", "number", "Hold each tap for (s)", 0.05,
-                  hint="How long the key stays down. Games that check the "
-                       "keyboard once a frame can miss a tap shorter than "
-                       "this — raise it to 0.1 if a press seems to go "
-                       "nowhere."),
+            _KEY_HOLD_FIELD,
         ),
         describe=lambda s: (f"Press {keyboard.label(str(s.get('key') or '?'))}"
                             + (f" x{s['presses']}" if int(s.get("presses", 1) or 1) > 1

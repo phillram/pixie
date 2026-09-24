@@ -209,6 +209,19 @@ class SettingsDialog:
          "one key step. Drawn fresh every time, so no two are the same "
          "length. Keep it under half a second or two clicks stop reading as "
          "a double-click."),
+        ("press_hold", "How long a press lasts",
+         "How long a mouse button or a key stays down. Raise it if an "
+         "application seems to miss clicks or key presses entirely; some "
+         "sample input once a frame and can step over a short one."),
+        ("press_settle", "Pause before pressing",
+         "Between the cursor arriving somewhere and the button going down. "
+         "Some applications will not take a click until they have noticed "
+         "the pointer arrive, and act on wherever it was before otherwise."),
+        ("travel_speed", "Cursor travel speed",
+         "How fast the cursor moves when 'Move the cursor there' is ticked "
+         "below. A speed rather than a time, so a long move takes longer "
+         "than a short one. Capped at 0.8 seconds however far it has to go.",
+         "pixels a second"),
     )
 
     def __init__(self, parent: tk.Misc, settings: engine_mod.Settings,
@@ -234,7 +247,8 @@ class SettingsDialog:
                   justify="left").grid(row=row, column=0, columnspan=2,
                                        sticky="w", pady=(0, 14))
         row += 1
-        for key, label, hint in self.RANGES:
+        for key, label, hint, *rest in self.RANGES:
+            unit = rest[0] if rest else "seconds"
             ttk.Label(frame, text=label).grid(row=row, column=0, sticky="w",
                                               padx=(0, 14), pady=(4, 0))
             box = ttk.Frame(frame)
@@ -245,7 +259,7 @@ class SettingsDialog:
                 var = tk.StringVar(value=str(getattr(settings, key + suffix)))
                 ttk.Entry(box, textvariable=var, width=7).pack(side="left")
                 self.vars[key + suffix] = var
-            ttk.Label(box, text="seconds", style="Muted.TLabel").pack(
+            ttk.Label(box, text=unit, style="Muted.TLabel").pack(
                 side="left", padx=(6, 0))
             row += 1
             theme.wrapping_label(frame, hint, style="Muted.TLabel").grid(
@@ -345,8 +359,8 @@ class SettingsDialog:
                                                       sticky="w")
         row += 1
         ttk.Label(frame, text="A warped cursor is somewhere, then somewhere else, "
-                              "having crossed nothing in between. Moving takes about "
-                              "a quarter of a second and passes over what is in the way.",
+                              "having crossed nothing in between. Moving passes over "
+                              "what is in the way, at the speed set above.",
                   style="Muted.TLabel", wraplength=int(440 * scale),
                   justify="left").grid(row=row, column=0, columnspan=2,
                                        sticky="w", pady=(0, 10))
