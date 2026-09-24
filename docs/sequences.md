@@ -315,6 +315,19 @@ makes: to a click, and away to the parking spot afterwards. It travels at
 a long move takes longer than a short one, capped at 0.8 seconds however far
 it goes. Off, the cursor appears at each target instead.
 
+Every clicking step has a **Getting there** of its own, for when one click
+wants different treatment from the rest:
+
+| Getting there | What happens |
+| --- | --- |
+| as the sequence settings say | Follows the tick box above. The default |
+| move there, then click | Travels, whatever the sequence says |
+| appear there, then click | Arrives instantly, whatever the sequence says |
+
+Moving lets an application see the pointer approach, which is what opens a
+hover state. Appearing is instant, and worth it on a step that runs every lap
+and only has to land.
+
 `After each step` sends the cursor somewhere harmless once a click is done, so
 it cannot sit over the next thing Pixie looks at. **Pick area...** drags a box
 instead of one spot, and the cursor lands somewhere different inside it every

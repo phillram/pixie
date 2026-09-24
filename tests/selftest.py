@@ -2409,8 +2409,32 @@ def _check_the_cursor_travels_to_a_click() -> list[str]:
     if not older.glide:
         problems.append("a sequence that had gliding on lost it in the rename")
 
+    # A step can override the sequence either way, and "inherit" has to mean
+    # inherit, or switching the sequence-wide setting off would quietly
+    # un-set every step that had been left alone.
+    wanted = {
+        (False, "inherit"): "warp", (True, "inherit"): "glide",
+        (False, "glide"): "glide", (True, "glide"): "glide",
+        (False, "warp"): "warp", (True, "warp"): "warp",
+    }
+    runner = engine_mod.Engine(engine_mod.Sequence(name="mix"), dry_run=False)
+    real_pos = mouse_mod.position
+    mouse_mod.position = lambda: (0, 0)
+    try:
+        for (sequence_wide, per_step), expected in wanted.items():
+            runner.sequence.settings.glide = sequence_wide
+            got = runner._travel_to({"type": "click_point",
+                                     "travel": per_step}, 900, 600)
+            actual = "warp" if got is None else "glide"
+            if actual != expected:
+                problems.append(
+                    f"sequence gliding {'on' if sequence_wide else 'off'} with "
+                    f"a step set to {per_step!r} gave {actual}, wanted {expected}")
+    finally:
+        mouse_mod.position = real_pos
+
     print(f"Travel to click : warping {len(warped)} move, gliding "
-          f"{len(glided)} moves, arriving on the target")
+          f"{len(glided)} moves; 6 step/sequence combinations all correct")
     return problems
 
 

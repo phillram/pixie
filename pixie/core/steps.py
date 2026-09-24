@@ -122,6 +122,15 @@ _ANCHOR_HINT = (
 # only turn it off, not point it somewhere else: a spot that is safe on one
 # screen is rarely safe on another, which is the whole reason for wanting it
 # off in the first place.
+# How the cursor gets to a click. "inherit" leaves it to the sequence-wide
+# setting, so a step that has never been thought about follows it.
+TRAVEL_CHOICES = ("inherit", "glide", "warp")
+TRAVEL_LABELS = {
+    "inherit": "as the sequence settings say",
+    "glide": "move there, then click",
+    "warp": "appear there, then click",
+}
+
 SECTION_PARK = ("inherit", "off")
 SECTION_PARK_LABELS = {
     "inherit": "as the sequence settings say",
@@ -159,6 +168,7 @@ CHOICE_LABELS: dict[str, dict[str, str]] = {
     "where": {key: ON_TIMEOUT_LABELS[key] for key in JUMP_TARGETS},
     "must_reach": REACH_LABELS,
     "park": SECTION_PARK_LABELS,
+    "travel": TRAVEL_LABELS,
     "anchor": ANCHOR_LABELS,
 }
 # What the chosen value actually means, shown under the dropdown.
@@ -395,6 +405,12 @@ _BUTTON_FIELDS: tuple[Field, ...] = (
                "stays well inside Windows' double-click time, so the "
                "application reads them as one double-click."),
     Field("button", "choice", "Which mouse button", "left", choices=BUTTONS),
+    Field("travel", "choice", "Getting there", "inherit",
+          choices=TRAVEL_CHOICES,
+          hint="Whether the cursor travels to this click or appears at it.\n"
+               "Moving lets an application see the pointer approach, which is "
+               "what opens a hover state. Appearing is instant, and worth it "
+               "on a step that runs every lap and only has to land."),
     _CLICK_GAP_FIELD,
     _CLICK_HOLD_FIELD,
 )

@@ -510,7 +510,7 @@ class Engine:
                         interval=self._repeat_gap(step),
                         before=self._settle_before(),
                         hold=self._press_hold(step),
-                        travel=self._travel_to(x, y))
+                        travel=self._travel_to(step, x, y))
 
     # -- step handlers ---------------------------------------------------
 
@@ -1069,9 +1069,18 @@ class Engine:
         low, high = settings.press_settle_min, settings.press_settle_max
         return lambda: _between(low, high)
 
-    def _travel_to(self, to_x: int, to_y: int) -> float | None:
-        """How long to take reaching a point, or None to appear there."""
-        if not self.sequence.settings.glide:
+    def _travel_to(self, step: dict[str, Any], to_x: int,
+                   to_y: int) -> float | None:
+        """How long to take reaching a click, or None to appear there.
+
+        The step decides, and "inherit" hands it back to the sequence. Three
+        states rather than a tick box, so that switching the sequence-wide
+        setting off does not quietly un-set every step that never asked.
+        """
+        how = str(self._value(step, "travel", "inherit"))
+        if how == "warp":
+            return None
+        if how != "glide" and not self.sequence.settings.glide:
             return None
         return self._travel_time(to_x, to_y)
 
