@@ -411,6 +411,10 @@ class Engine:
         # both exist to deal with the aftermath of an action, and a step that
         # only looked has no aftermath.
         self.acted = False
+        # Where the last click actually landed, after any scatter. Read by
+        # the click preview, which otherwise has no way to know: the scatter
+        # happens inside _click, below where the caller can see it.
+        self.last_click: tuple[int, int] | None = None
         # Said once if the stop key turns out to be unwatchable, rather than
         # on every guard, which is several times a second.
         self._warned_about_stop_key = False
@@ -534,6 +538,7 @@ class Engine:
 
     def _click(self, x: int, y: int, step: dict[str, Any], what: str) -> None:
         x, y = self._scatter(step, x, y)
+        self.last_click = (x, y)
         clicks = int(self._value(step, "clicks", 1) or 1)
         button = self._value(step, "button", "left")
         suffix = "  [dry run]" if self.dry_run else ""

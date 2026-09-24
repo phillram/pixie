@@ -2557,8 +2557,13 @@ class App:
 
         class Rehearsal(engine_mod.Engine):
             def _click(self, x, y, one, what):  # noqa: ANN001 - matches the base
-                recorded.append((x, y, what))
+                # Record where it lands, not where it aimed: a step that
+                # spreads its clicks lands somewhere inside a box round the
+                # point, and showing the point would be showing the one spot
+                # it is least likely to hit.
                 super()._click(x, y, one, what)
+                landed = self.last_click or (x, y)
+                recorded.append((landed[0], landed[1], what, (x, y)))
 
         # No pauses and no parking: this is a rehearsal, not a run.
         settings = engine_mod.Settings.from_dict(vars(self.sequence.settings))
@@ -2572,7 +2577,7 @@ class App:
 
         boxes = [runner.last_box] if runner.last_box else []
         lines: list[tuple[str, str]] = []
-        for x, y, what in recorded:
+        for x, y, what, _aimed in recorded:
             lines.append((f"Would click {x}, {y}  -  {what}", "good"))
         if len(steps) > 1:
             lines.append((f"After running '{steps[0].get('name')}' first, which "
@@ -2584,14 +2589,20 @@ class App:
         # points[0] is the click. Anything after it is somewhere else the same
         # step could equally have landed, drawn faintly.
         points = [point[:2] for point in recorded[:1]]
-        if step.get("type") == "click_box" and step.get("box"):
-            lines.append(("This step picks a fresh spot inside the box every "
-                          "time - the faint dots are twenty more it could "
-                          "have chosen.", "muted"))
+        spread = int(step.get("scatter") or 0)
+        picks_a_spot = step.get("type") == "click_box" and step.get("box")
+        if picks_a_spot or spread:
+            lines.append(("This step picks a fresh spot every time - the faint "
+                          "dots are twenty more it could have chosen.", "muted"))
             for _ in range(20):
                 runner.run_step(step)
                 points.append(recorded[-1][:2])
-            boxes = [tuple(step["box"])]
+            if picks_a_spot:
+                boxes = [tuple(step["box"])]
+            else:
+                aimed = recorded[0][3]
+                boxes = [(aimed[0] - spread, aimed[1] - spread,
+                          spread * 2 + 1, spread * 2 + 1)]
         return points, boxes, lines
 
     def test_step(self) -> None:

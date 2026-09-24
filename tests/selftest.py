@@ -783,8 +783,12 @@ def _check_parking_only_after_a_click() -> list[str]:
     from pixie.system import mouse as mouse_mod
 
     parked: list[tuple[int, int]] = []
+    # Warping on purpose. This counts how many times parking happened, and a
+    # travelling cursor reports dozens of moves for one journey - a varying
+    # number of which land inside the box, depending which easing was drawn.
+    # Gliding to the parking spot is _check_parking_and_gliding's job.
     settings = engine_mod.Settings(
-        park_mouse="custom", park_box=[900, 500, 10, 10],
+        park_mouse="custom", park_box=[900, 500, 10, 10], travel_style="warp",
         step_pause_min=0, step_pause_max=0, cycle_pause_min=0,
         cycle_pause_max=0, failsafe_corner=False)
 
