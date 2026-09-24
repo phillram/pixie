@@ -875,7 +875,8 @@ class Engine:
         times = f" x{presses}" if presses > 1 else ""
         self.log(f"    press {key}{times}{suffix}")
         if not self.dry_run:
-            keyboard.press(key, presses, float(step.get("interval", 0.08)))
+            keyboard.press(key, presses, float(step.get("interval", 0.08)),
+                           float(step.get("hold", 0.05)))
         self.acted = True
         return "ok"
 

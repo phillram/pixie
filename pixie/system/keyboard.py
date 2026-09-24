@@ -20,9 +20,16 @@ MAPVK_VK_TO_VSC = 0
 
 # Keys that live on the extended part of the keyboard and need the extended
 # flag, or applications see the numpad equivalent instead.
+#
+# Enter is deliberately absent. It is the one key where the rule runs the other
+# way: the main Enter carries the plain scan code and the *numpad* Enter is the
+# extended one. Flagging it made every "press Enter" arrive as numpad Enter,
+# which window messages hide -- both report VK_RETURN -- but raw input does not,
+# so games read it as a different key and ignore it.
 _EXTENDED = {
-    "Enter", "Insert", "Delete", "Home", "End", "PageUp", "PageDown",
+    "Insert", "Delete", "Home", "End", "PageUp", "PageDown",
     "Up", "Down", "Left", "Right", "PrintScreen", "NumLock",
+    "NumpadEnter",
 }
 
 KEYS: dict[str, int] = {
@@ -30,6 +37,7 @@ KEYS: dict[str, int] = {
     **{str(digit): 0x30 + digit for digit in range(10)},
     **{f"F{n}": 0x6F + n for n in range(1, 13)},
     "Enter": 0x0D,
+    "NumpadEnter": 0x0D,
     "Escape": 0x1B,
     "Space": 0x20,
     "Tab": 0x09,
@@ -126,8 +134,13 @@ def normalize(name: str) -> str:
 
 
 def press(name: str, presses: int = 1, interval: float = 0.08,
-          hold: float = 0.03) -> None:
-    """Tap a key. `presses` is how many separate taps, `hold` how long each lasts."""
+          hold: float = 0.05) -> None:
+    """Tap a key. `presses` is how many separate taps, `hold` how long each lasts.
+
+    `hold` matters for applications that check the keyboard once a frame rather
+    than reading every event. Too short a tap can start and finish between two
+    checks and be missed entirely, so the default spans several frames.
+    """
     key = normalize(name)
     vk = KEYS[key]
     scan = _user32.MapVirtualKeyW(vk, MAPVK_VK_TO_VSC)

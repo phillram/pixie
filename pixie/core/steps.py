@@ -662,6 +662,11 @@ STEP_TYPES: dict[str, StepType] = {
                   hint="How many separate taps. 2 = press it twice."),
             Field("interval", "number", "Gap between taps (s)", 0.08,
                   hint="Raise this if the application misses the second press."),
+            Field("hold", "number", "Hold each tap for (s)", 0.05,
+                  hint="How long the key stays down. Games that check the "
+                       "keyboard once a frame can miss a tap shorter than "
+                       "this — raise it to 0.1 if a press seems to go "
+                       "nowhere."),
         ),
         describe=lambda s: (f"Press {s.get('key', '?')}"
                             + (f" x{s['presses']}" if int(s.get("presses", 1) or 1) > 1

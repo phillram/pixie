@@ -131,6 +131,7 @@ def main() -> int:
     failures.extend(_check_declared_defaults())
     failures.extend(_check_click_box())
     failures.extend(_check_keyboard())
+    failures.extend(_check_enter_is_the_main_one())
     failures.extend(_check_mouse_movement_is_injected())
     failures.extend(_check_mouse())
 
@@ -2055,9 +2056,50 @@ def _check_keyboard() -> list[str]:
     problems = []
     if got.count("q") < 2:
         problems.append(f"expected two 'q' presses, got {received}")
-    if "return" not in got and "kp_enter" not in got:
+    # A window message cannot tell the main Enter from the numpad one - both
+    # report VK_RETURN, so both arrive here as "return". Which one we actually
+    # sent is checked below, at the flags.
+    if "return" not in got:
         problems.append(f"expected Enter, got {received}")
     return problems
+
+
+def _check_enter_is_the_main_one() -> list[str]:
+    """Enter must go out as the main Enter, not the numpad Enter.
+
+    The two keys share a virtual-key code and a scan code, and are told apart
+    only by the extended flag, which puts an E0 prefix on the scan code. Window
+    messages hide the difference entirely; raw input, which is what games read,
+    does not. Flagging Enter as extended therefore looked completely fine
+    everywhere except in the one place it mattered, where the game saw a key
+    nobody had bound and did nothing.
+
+    The rule reads backwards for this key: extended means numpad here, whereas
+    for the arrows and the navigation cluster extended means the main key.
+    """
+    from pixie.system import keyboard as kb
+
+    sent: list[tuple[int, int, int]] = []
+    real_send = kb._send
+    kb._send = lambda vk, scan, flags: sent.append((vk, scan, flags))
+    try:
+        for name in ("Enter", "NumpadEnter", "Up", "Q"):
+            sent.clear()
+            kb.press(name, hold=0)
+            if not sent:
+                return [f"pressing {name} sent nothing at all"]
+            _, _, flags = sent[0]
+            extended = bool(flags & kb.KEYEVENTF_EXTENDEDKEY)
+            wanted = name in ("NumpadEnter", "Up")
+            if extended != wanted:
+                verb = "was" if extended else "was not"
+                return [f"{name} {verb} flagged extended, which makes a game "
+                        f"read it as {'the numpad' if extended else 'a different'} key"]
+    finally:
+        kb._send = real_send
+
+    print("Enter identity : main Enter (no E0 prefix), numpad Enter separate")
+    return []
 
 
 def _check_mouse_movement_is_injected() -> list[str]:

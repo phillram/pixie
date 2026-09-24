@@ -236,6 +236,33 @@ The grouping lives in `STEP_GROUPS` in `pixie/core/steps.py` next to the step
 types themselves, and `check_wiring.py` fails if a type is declared without a
 place in the menu - since the menu is the only way to create one.
 
+### When a key press goes nowhere
+
+The log says `press Enter` and the application carries on as if nothing
+happened. Two things cause this, and they need opposite fixes.
+
+**The tap was too short.** Applications that read every keyboard event cannot
+miss a tap however brief, but games usually check the keyboard once a frame
+instead. A tap that starts and finishes between two checks never existed as far
+as that game is concerned. `Hold each tap for (s)` is the dial; it defaults to
+0.05, around three frames at 60fps. Raise it to 0.1 before suspecting anything
+subtler.
+
+**It was the wrong key.** `Enter` and `NumpadEnter` are separate entries
+because Windows treats them as one key with a flag on it - same virtual-key
+code, same scan code, differing only by an `E0` prefix. Anything reading window
+messages sees `VK_RETURN` either way and cannot tell you which you sent. Games
+read raw input, where the prefix is plainly visible, so they can and do bind
+them separately. If a press does nothing, try the other one.
+
+That prefix rule reads backwards for Enter compared with every other key: the
+arrows and the Insert/Delete/Home/End cluster are the *extended* ones and their
+numpad twins are plain, but for Enter it is the numpad key that is extended.
+Pixie flagged Enter as extended until v1.11.0, so every `press Enter` arrived as
+numpad Enter - invisible to `tests/selftest.py`'s window, and ignored by the
+game. `_check_enter_is_the_main_one` now asserts the flag directly rather than
+asking a window what it received.
+
 ### When a find is probably not the thing
 
 Every floor on a step - `Smallest patch`, the width and height minimums - is a
