@@ -324,9 +324,13 @@ away to the parking spot afterwards.
 | a different journey every time | Draws one of the three above, and one of three speed curves, per journey. The default |
 
 Travelling happens at `Cursor travel speed`. A speed rather than a duration, so
-a long move takes longer than a short one, capped at 0.8 seconds however far it
-goes. Whatever shape a journey takes, it finishes on the target rather than
-near it.
+a long move takes longer than a short one. `No journey longer than` is the
+ceiling on that: lower it when travelling costs more than it is worth, and
+short hops are unaffected because they were never near it. Whatever shape a
+journey takes, it finishes on the target rather than near it.
+
+If a loop feels slow, those two are the dials, and the distance is the third:
+a parking box covering half the screen means every journey is a long one.
 
 Every clicking step has a **Getting there** of its own, for when one click
 wants different treatment from the rest:

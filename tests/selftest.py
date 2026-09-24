@@ -2714,10 +2714,30 @@ def _check_cursor_travel_scales_with_distance() -> list[str]:
         problems.append("every 500px move took exactly the same time")
     for distance, drawn in times.items():
         for value in drawn:
-            if not engine_mod.TRAVEL_MIN_SECONDS <= value <= engine_mod.TRAVEL_MAX_SECONDS:
+            cap = runner.sequence.settings.travel_cap
+            if not engine_mod.TRAVEL_MIN_SECONDS <= value <= cap:
                 problems.append(f"a {distance}px move was given {value:.3f}s, "
                                 "outside the clamps")
                 break
+    # The ceiling is a setting, so lowering it has to shorten a long journey
+    # while leaving a short one alone.
+    runner.sequence.settings.travel_cap = 0.2
+    mouse_mod.position = lambda: (0, 0)
+    try:
+        capped = [runner._travel_time(3000, 0) for _ in range(8)]
+        short_still = [runner._travel_time(50, 0) for _ in range(8)]
+    finally:
+        mouse_mod.position = real_pos
+        runner.sequence.settings.travel_cap = 0.8
+    if max(capped) > 0.2 + 1e-9:
+        problems.append(f"a cap of 0.2s let a long journey take {max(capped):.3f}s")
+    if max(capped) < 0.19:
+        problems.append(f"a 3000px journey under a 0.2s cap took only "
+                        f"{max(capped):.3f}s, so the cap is doing the deciding "
+                        "even when the distance should")
+    if min(short_still) < engine_mod.TRAVEL_MIN_SECONDS:
+        problems.append("lowering the cap took a short journey under the floor")
+
     # The speed a long move ends up at must at least be in the realm of a hand.
     fastest = 3000 / min(times[3000])
     if fastest > 20000:

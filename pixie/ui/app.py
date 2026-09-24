@@ -272,6 +272,21 @@ class SettingsDialog:
                 row=row, column=0, columnspan=2, sticky="ew", pady=(0, 10))
             row += 1
 
+        ttk.Label(frame, text="No journey longer than").grid(
+            row=row, column=0, sticky="w", padx=(0, 14), pady=(4, 0))
+        cap_var = tk.StringVar(value=str(settings.travel_cap))
+        ttk.Entry(frame, textvariable=cap_var, width=7).grid(
+            row=row, column=1, sticky="w", pady=(4, 0))
+        self.vars["travel_cap"] = cap_var
+        row += 1
+        ttk.Label(frame, text="A ceiling on one cursor journey, however far it "
+                              "has to go. Lower it if travelling is costing more "
+                              "than it is worth; a short hop is unaffected.",
+                  style="Muted.TLabel", wraplength=int(440 * scale),
+                  justify="left").grid(row=row, column=0, columnspan=2,
+                                       sticky="w", pady=(0, 10))
+        row += 1
+
         ttk.Label(frame, text="Give up after").grid(
             row=row, column=0, sticky="w", padx=(0, 14), pady=(4, 0))
         wait_var = tk.StringVar(value=str(settings.wait_timeout))

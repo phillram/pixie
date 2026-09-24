@@ -30,11 +30,11 @@ IDLE_NOTICE_SECONDS = 15.0  # how often to say 'still waiting' while idling
 # back far smaller than usual. Enough for a steady median, small enough that
 # a run lasting days costs no more than one lasting minutes.
 MATCH_HISTORY = 50
-# However far the cursor has to go, a journey shorter than this looks like a
-# twitch and one longer than this is just time spent watching it. Distance
-# divided by speed is clamped between them.
+# A journey shorter than this is a twitch rather than a movement, whatever
+# the arithmetic says. The ceiling is a setting, because how long a cursor may
+# spend crossing the screen is a trade against how fast the run goes and only
+# the person watching it can weigh that.
 TRAVEL_MIN_SECONDS = 0.05
-TRAVEL_MAX_SECONDS = 0.8
 # How far a wandering path may bow off the straight line: a share of the
 # distance, so a short hop stays a hop, and a ceiling so a long sweep does not
 # take a tour of the desktop.
@@ -120,6 +120,8 @@ class Settings:
     # duration makes a long move absurdly fast and a short one absurdly slow.
     travel_speed_min: float = 2000.0
     travel_speed_max: float = 4000.0
+    # However far it has to go, no single journey takes longer than this.
+    travel_cap: float = 0.8
     failsafe_corner: bool = True
     # Where to send the cursor after each step: "off", "center" (middle of the
     # primary monitor) or "custom" (park_box).
@@ -1183,7 +1185,10 @@ class Engine:
         settings = self.sequence.settings
         speed = _between(settings.travel_speed_min, settings.travel_speed_max)
         seconds = distance / max(1.0, speed)
-        return min(TRAVEL_MAX_SECONDS, max(TRAVEL_MIN_SECONDS, seconds))
+        # The floor is applied last, so a cap set below it still leaves a
+        # journey rather than a jump.
+        cap = float(self.sequence.settings.travel_cap)
+        return max(TRAVEL_MIN_SECONDS, min(cap, seconds))
 
     def _pause_after(self, step: dict[str, Any]) -> float:
         """This step's own pause if it has one, otherwise the sequence default."""
