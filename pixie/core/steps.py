@@ -109,17 +109,11 @@ ANCHOR_LABELS = {
     "bottom_right": "its bottom-right corner",
 }
 _ANCHOR_HINT = (
-    "Where in the thing that was found to aim, before the offset below is "
-    "applied.\n"
-    "The middle is right nearly always. An edge is the answer when two "
-    "targets can sit side by side and be found as one: two highlighted cards "
-    "touching become one wide patch, and its middle falls between them. Aim "
-    "at the left edge with an offset to the right, and you land on the left "
-    "one whether they merged or not.\n"
-    "An edge follows the shape rather than the box round it, so it works on "
-    "things that are tilted or at different heights - the left edge of a fan "
-    "of cards is measured on the card that is actually there, not on the "
-    "middle of a box that belongs to no card at all."
+    "Where on the match to aim, before the offset below.\n"
+    "The middle is right nearly always. Use an edge when two targets "
+    "can sit side by side and be found as one patch, because the middle "
+    "of that patch lands in the gap between them. An edge follows the "
+    "shape, not the box around it."
 )
 
 # Which patch to use when several match at once. The list itself comes from
@@ -173,11 +167,10 @@ CHOICE_NOTES: dict[str, dict[str, str]] = {
 }
 
 _MATCH_HINT = (
-    "'hue' matches the shade whatever its brightness - use it for anything that "
-    "glows, pulses or fades, because a glow is one color smeared across a "
-    "brightness gradient.\n"
-    "'rgb' matches the exact color within a distance. Better for flat, solid, "
-    "unchanging colors."
+    "'hue' matches the shade at any brightness. Use it for anything "
+    "that glows, pulses or fades.\n"
+    "'rgb' matches the exact color within a distance. Better for flat, "
+    "solid, unchanging colors."
 )
 _TOLERANCE_HINT = (
     "In 'hue' mode this is degrees of hue, out of 360. 10-20 is a good range; "
@@ -192,64 +185,41 @@ _BRIGHTNESS_HINT = (
     "Hue mode only. Ignores near-black pixels, whose hue is meaningless too."
 )
 _TIMEOUT_HINT = (
-    "How long to keep looking before giving up and doing whatever 'If not "
-    "found' says. This is the setting that decides how long Pixie sits still "
-    "when something does not turn up.\n"
-    "Left alone it uses the one in Settings, so most steps need nothing here. "
-    "Set it when this step is different: the checks that run every time round "
-    "a loop and usually find nothing are the ones worth shortening, because "
-    "their wait is paid on every single pass.\n"
-    "**0 means wait forever**: she idles here until it appears, however long "
-    "that takes. Use it when the next steps make no sense without it."
+    "How long to keep looking before doing whatever 'If not found' "
+    "says.\n"
+    "Left alone it uses the sequence-wide setting, which suits most "
+    "steps. Worth shortening on checks that run every lap and usually "
+    "find nothing, because their wait is paid on every pass. 0 waits "
+    "forever."
 )
 _TIMEOUT_OFF = "Use the sequence-wide setting"
 _TIMEOUT_ON = "or instead, give up after"
 _JOIN_HINT = (
     "Counts pieces of color this close together as one thing.\n"
-    "An outline is hardly ever one solid shape: a glow around a card is "
-    "broken up by whatever overlaps it, by anti-aliasing, and by its corners "
-    "fading out, so it arrives as a handful of separate pieces. At 0 each "
-    "piece counts on its own, which is why a row of highlighted cards can "
-    "come back as forty specks and 'furthest left' picks the leftmost speck "
-    "rather than the leftmost card.\n"
-    "Set it to comfortably more than the widest gap in the outline - 20 to 40 "
-    "for a card border - and the whole outline becomes one patch whose middle "
-    "is the middle of the card."
+    "An outline is rarely one solid shape, so at 0 a single highlight "
+    "can come back as dozens of specks. Set it to comfortably more than "
+    "the widest gap in the outline: 20 to 40 suits most borders."
 )
 _SPECK_HINT = (
     "Throws away pieces this small before anything is joined.\n"
-    "Joining is what makes a broken outline one shape again, but it will "
-    "happily gather up a scatter of anti-aliased specks too - forty pieces of "
-    "ten pixels each become one 'patch' of four hundred, which then sails "
-    "past 'Smallest patch' and every size limit, because those are measured "
-    "on the assembled shape.\n"
-    "Real pieces of an outline are hundreds of pixels; the specks are tens. "
-    "Set this between the two - 100 is a good start - and the noise is gone "
-    "before joining can rescue it. 0 keeps every piece."
+    "Joining will gather a scatter of specks into one patch big enough "
+    "to pass every size limit below. Real pieces of an outline are "
+    "hundreds of pixels and specks are tens, so 100 is a good start. 0 "
+    "keeps every piece."
 )
 _JOIN_ACROSS_HINT = (
-    "The same thing, but sideways - and it usually wants to be much smaller, "
-    "or zero.\n"
-    "What breaks an outline up and what sits next to it are different things. "
-    "A card overlapped by its neighbour shows a top bar with slivers of its "
-    "sides below: pieces stacked above one another, so the reach they need is "
-    "upward. Anything else on screen glowing the same color - a lamp, a lit "
-    "prop, a beam - is *beside* the thing you want, and every pixel of "
-    "sideways reach is an invitation to it.\n"
-    "Start at 0. The two sides of one outline are a card's width apart and "
-    "were never going to join sideways anyway; they join through the bar "
-    "above them."
+    "The same, sideways, and it wants to be much smaller or zero.\n"
+    "Reaching up and down rebuilds an outline broken by whatever "
+    "overlaps it. Reaching sideways mostly invites in whatever else is "
+    "glowing beside it. Start at 0 and raise it only if a real piece "
+    "will not connect."
 )
 _REACH_HINT = (
-    "Where something sits is often the steadiest thing about it.\n"
-    "A hand of cards is always at the bottom of the screen, however many "
-    "cards are in it and whatever angle they fan to, so every card's glow "
-    "runs off the bottom of an area drawn over the hand. A lit prop in the "
-    "background never does. Neither does a reflection, a lamp or a beam.\n"
-    "That holds when nothing about the color does: it survives a change of "
-    "background, a bigger hand, and cards tilted every which way. If your "
-    "target is cut off by the edge of the area on purpose, say so here and "
-    "everything that is not gets dropped for free."
+    "Drop any patch that does not run off this edge of the search area.\n"
+    "Where a thing sits is steadier than what color it is, and it "
+    "survives a change of background. Use it when your target is cut "
+    "off by an edge of the area and the things you want ignored are "
+    "not."
 )
 _SIZE_HINT = (
     "Ignore anything smaller than this. Two numbers, because the thing that "
@@ -262,12 +232,11 @@ _SIZE_HINT = (
     "these to a bit under it. 0 means no limit."
 )
 _PICK_HINT = (
-    "Several patches of the color can be on screen at once - a row of cards "
-    "all glowing, for instance. This decides which one Pixie goes for.\n"
-    "'the biggest one' is what she has always done, and is right when the "
-    "real target is the strongest glow. Pick a direction instead to work "
-    "through them in order: 'furthest left' takes the leftmost every time, so "
-    "repeating the section deals with them left to right."
+    "Which patch to use when several match at once.\n"
+    "'the biggest one' suits a single target that is the strongest "
+    "glow. Pick a direction to work through a row in order: 'furthest "
+    "left' takes the leftmost every time, so a repeating section deals "
+    "with them left to right."
 )
 _SECTION_PAUSE_HINT = (
     "Replaces the sequence-wide pause between sections, for this section "
@@ -287,11 +256,10 @@ _SECTION_PARK_HINT = (
     "Settings says."
 )
 _SECTION_LIMIT_HINT = (
-    "A ceiling on every wait inside this section. A step that would wait 30s, "
-    "or forever, gives up after this instead; a step that already waits less "
-    "keeps its own shorter time.\n"
-    "This is the quick way to stop a section idling: set it to 3 and nothing "
-    "in the section can sit still for longer than that."
+    "A ceiling on every wait inside this section.\n"
+    "A step that would wait 30s, or forever, gives up after this "
+    "instead; one that already waits less keeps its own time. The quick "
+    "way to stop a section idling."
 )
 
 

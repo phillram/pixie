@@ -243,9 +243,8 @@ class SettingsDialog:
             ttk.Label(box, text="seconds", style="Muted.TLabel").pack(
                 side="left", padx=(6, 0))
             row += 1
-            ttk.Label(frame, text=hint, style="Muted.TLabel",
-                      wraplength=int(440 * scale), justify="left").grid(
-                row=row, column=0, columnspan=2, sticky="w", pady=(0, 10))
+            theme.wrapping_label(frame, hint, style="Muted.TLabel").grid(
+                row=row, column=0, columnspan=2, sticky="ew", pady=(0, 10))
             row += 1
 
         ttk.Label(frame, text="Give up after").grid(
@@ -361,10 +360,39 @@ class SettingsDialog:
         ttk.Button(buttons, text="Save", style="Accent.TButton",
                    command=self._save).pack(side="right")
 
+        self._stretch_hints(frame, int(20 * scale))
+
         self.window.update_idletasks()
         x = parent.winfo_rootx() + (parent.winfo_width() - self.window.winfo_width()) // 2
         y = parent.winfo_rooty() + (parent.winfo_height() - self.window.winfo_height()) // 3
         self.window.geometry(f"+{x}+{y}")
+
+    @staticmethod
+    def _stretch_hints(frame: ttk.Frame, padding: int) -> None:
+        """Wrap every paragraph to the dialog's real width.
+
+        The dialog sizes itself to its widest row, and which row that is
+        depends on the machine, so there is no sensible width to write down in
+        advance. The paragraphs are laid out at a starting width and stretched
+        once there is something to stretch to, which is what stops them
+        wrapping two thirds of the way across and leaving the rest empty.
+
+        Only labels that already wrap are touched, so the captions beside the
+        boxes stay the single lines they are.
+        """
+        frame.update_idletasks()
+        room = frame.winfo_width() - padding * 2
+        if room <= 0:
+            return
+        for child in frame.winfo_children():
+            if not isinstance(child, ttk.Label):
+                continue
+            try:
+                wraps = int(child.cget("wraplength") or 0)
+            except (tk.TclError, ValueError):
+                continue
+            if wraps:
+                child.configure(wraplength=room)
 
     def _park_area_text(self) -> str:
         if not self.park_area:
@@ -634,6 +662,9 @@ class App:
 
         self.dry_run = tk.BooleanVar(value=True)
         self.hide_while_running = tk.BooleanVar(value=True)
+        # Off by default: once you know what a setting does, its paragraph is
+        # only something to scroll past. Hover a setting's name to get it back.
+        self.show_hints = tk.BooleanVar(value=False)
         self.status_text = tk.StringVar(value="Idle")
         self.cycle_text = tk.StringVar(value="Cycles: 0")
 
@@ -827,10 +858,20 @@ class App:
         header.columnconfigure(0, weight=1)
         self.editor_title = ttk.Label(header, text="Step settings", style="Title.TLabel")
         self.editor_title.grid(row=0, column=0, sticky="w")
+        self.editor_title_tip = theme.tip(self.editor_title, "",
+                                          wraplength=int(380 * self.scale))
+        self.hints_button = ttk.Checkbutton(
+            header, text="Hints", style="Tool.TCheckbutton",
+            variable=self.show_hints, command=self._hints_toggled)
+        self.hints_button.grid(row=0, column=1, sticky="e", padx=(0, 10))
+        theme.tip(self.hints_button,
+                  "Show the explanation under every setting.\n\nWith this off "
+                  "the panel is just the settings, and each one explains itself "
+                  "if you hover its name.")
         self.explain_button = ttk.Button(header, text="What matches?",
                                          style="Tool.TButton",
                                          command=self.explain_step, state="disabled")
-        self.explain_button.grid(row=0, column=1, sticky="e", padx=(0, 6))
+        self.explain_button.grid(row=0, column=2, sticky="e", padx=(0, 6))
         theme.tip(self.explain_button,
                   "Shows the search area as Pixie sees it: every pixel of the "
                   "color tinted, every patch boxed, and the ones she would "
@@ -840,7 +881,7 @@ class App:
         self.click_button = ttk.Button(header, text="Show the click",
                                        style="Tool.TButton",
                                        command=self.preview_click, state="disabled")
-        self.click_button.grid(row=0, column=2, sticky="e", padx=(0, 6))
+        self.click_button.grid(row=0, column=3, sticky="e", padx=(0, 6))
         theme.tip(self.click_button,
                   "Works out where this step would click, right now, and shows "
                   "you the spot on a picture of the screen.\n\nIt runs the step "
@@ -848,7 +889,7 @@ class App:
                   "where the click would actually go - not a second guess at it.")
         self.test_button = ttk.Button(header, text="Test this step", style="Tool.TButton",
                                       command=self.test_step, state="disabled")
-        self.test_button.grid(row=0, column=3, sticky="e")
+        self.test_button.grid(row=0, column=4, sticky="e")
         theme.tip(self.test_button,
                   "Run only the selected step, once, and report what it found in "
                   "the log. The quickest way to tune an image or a color without "
@@ -1291,6 +1332,11 @@ class App:
 
     # -- step editor -----------------------------------------------------
 
+    def _hints_toggled(self) -> None:
+        """Redraw the panel with the paragraphs shown or hidden, and remember."""
+        self.build_editor()
+        self.save_preferences()
+
     def build_editor(self) -> None:
         for child in self.editor.winfo_children():
             child.destroy()
@@ -1331,11 +1377,14 @@ class App:
             state="normal" if "clicks" in fields else "disabled")
         self.editor.columnconfigure(1, weight=1)
 
-        ttk.Label(self.editor, text=step_type.blurb, style="Blurb.TLabel",
-                  wraplength=int(560 * self.scale), justify="left").grid(
-            row=0, column=0, columnspan=3, sticky="w", pady=(0, 14))
-
-        row = 1
+        # Always reachable by hovering the title, so hiding it costs nothing
+        # but the space it was taking.
+        self.editor_title_tip.update(step_type.blurb)
+        row = 0
+        if self.show_hints.get():
+            theme.wrapping_label(self.editor, step_type.blurb).grid(
+                row=0, column=0, columnspan=3, sticky="ew", pady=(0, 14))
+            row = 1
         row = self._add_name_row(step, row)
         for spec in step_type.fields:
             row = self._add_field_row(step, spec, row)
@@ -1351,18 +1400,21 @@ class App:
         return row + 1
 
     def _add_field_row(self, step: dict[str, Any], spec: step_defs.Field, row: int) -> int:
-        ttk.Label(self.editor, text=spec.label, style="Panel.TLabel").grid(
-            row=row, column=0, sticky="w", pady=4, padx=(0, 12))
+        caption = ttk.Label(self.editor, text=spec.label, style="Panel.TLabel")
+        caption.grid(row=row, column=0, sticky="w", pady=4, padx=(0, 12))
+        # With the paragraphs hidden a setting still has to be able to explain
+        # itself, or it is a word and a box with no meaning.
+        if spec.hint and not self.show_hints.get():
+            theme.tip(caption, spec.hint, wraplength=int(380 * self.scale))
 
         builder = getattr(self, self.FIELD_BUILDERS.get(spec.kind, "_field_number"))
         # A builder returns how many extra rows it used, so a field can put a
         # preview underneath itself.
         row += 1 + (builder(step, spec, row) or 0)
 
-        if spec.hint:
-            ttk.Label(self.editor, text=spec.hint, style="Blurb.TLabel",
-                      wraplength=int(520 * self.scale), justify="left").grid(
-                row=row, column=1, columnspan=2, sticky="w", pady=(0, 8))
+        if spec.hint and self.show_hints.get():
+            theme.wrapping_label(self.editor, spec.hint).grid(
+                row=row, column=1, columnspan=2, sticky="ew", pady=(0, 8))
             row += 1
         return row
 
@@ -2093,6 +2145,7 @@ class App:
         self._write_state(
             dry_run=bool(self.dry_run.get()),
             minimize_while_running=bool(self.hide_while_running.get()),
+            show_hints=bool(self.show_hints.get()),
             geometry=self._last_normal_geometry or self._current_geometry(),
             maximized=self._is_maximized(),
             **self._sash_positions(),
@@ -2197,6 +2250,9 @@ class App:
             self.dry_run.set(state["dry_run"])
         if isinstance(state.get("minimize_while_running"), bool):
             self.hide_while_running.set(state["minimize_while_running"])
+        if isinstance(state.get("show_hints"), bool):
+            self.show_hints.set(state["show_hints"])
+            self.build_editor()
 
         geometry = state.get("geometry")
         if isinstance(geometry, str) and self._geometry_is_on_screen(geometry):

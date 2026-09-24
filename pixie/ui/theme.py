@@ -111,6 +111,18 @@ def apply(root: tk.Misc) -> ttk.Style:
                                    ("disabled", PANEL)],
               indicatorforeground=[("selected", "#ffffff")])
 
+    # Sits among the Tool.TButton row in a panel header, so it takes the
+    # panel's background rather than the window's.
+    style.configure("Tool.TCheckbutton", background=PANEL, foreground=MUTED,
+                    focuscolor=PANEL, indicatorbackground=FIELD,
+                    indicatorforeground=ACCENT, indicatormargin=(0, 0, 6, 0),
+                    borderwidth=0, padding=(2, 4), font=FONT_SMALL)
+    style.map("Tool.TCheckbutton",
+              background=[("active", PANEL)],
+              foreground=[("selected", FG), ("active", FG)],
+              indicatorbackground=[("selected", ACCENT), ("active", "#3a3e48")],
+              indicatorforeground=[("selected", "#ffffff")])
+
     style.configure("TSeparator", background=BORDER)
     style.configure("Vertical.TScrollbar", background=FIELD, troughcolor=BG,
                     bordercolor=BG, arrowcolor=MUTED, borderwidth=0)
@@ -180,6 +192,35 @@ class Tooltip:
 def tip(widget: tk.Misc, text: str, wraplength: int = 320) -> Tooltip:
     """Attach a tooltip to a widget and hand it back, in case it needs updating."""
     return Tooltip(widget, text, wraplength)
+
+
+def wrapping_label(parent: tk.Misc, text: str, style: str = "Blurb.TLabel",
+                   minimum: int = 200, **kwargs) -> ttk.Label:
+    """A paragraph that re-wraps to whatever width it is given.
+
+    Tk labels wrap at a fixed pixel count, so a paragraph written for a narrow
+    pane keeps that shape in a wide one and leaves the right-hand half of the
+    panel empty. Grid it with sticky="ew" and this one follows the pane as you
+    drag the divider.
+
+    `minimum` is the starting width, and it matters: the label's requested
+    width is what the grid uses to decide how wide the column needs to be, so
+    starting unwrapped would size the panel to the longest paragraph in it.
+    """
+    label = ttk.Label(parent, text=text, style=style, justify="left",
+                      wraplength=minimum, **kwargs)
+    settled = {"width": minimum}
+
+    def refit(event: tk.Event) -> None:
+        # Re-wrapping changes the height, which fires <Configure> again. Only
+        # a real change of width is worth acting on, or this never settles.
+        if abs(event.width - settled["width"]) <= 8:
+            return
+        settled["width"] = event.width
+        label.configure(wraplength=max(minimum, event.width))
+
+    label.bind("<Configure>", refit)
+    return label
 
 
 def listbox(parent: tk.Misc, **kwargs) -> tk.Listbox:

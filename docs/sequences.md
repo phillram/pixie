@@ -7,6 +7,10 @@ For getting a color step to find the right thing, see
 
 ## Working in the editor
 
+**Hints**, at the top of the panel, shows an explanation under every setting.
+It is off by default, so the panel is just the settings. With it off, hover a
+setting's name to get its explanation, or the step title for the step's.
+
 ### Names, copies and pictures
 
 Name a step and the list reads by that name, with the generated summary
