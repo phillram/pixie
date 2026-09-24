@@ -134,6 +134,8 @@ def main() -> int:
     failures.extend(_check_enter_is_the_main_one())
     failures.extend(_check_look_alike_keys_are_told_apart())
     failures.extend(_check_how_often_it_looks())
+    failures.extend(_check_a_bad_stop_key_does_not_kill_the_run())
+    failures.extend(_check_tidying_never_deletes_a_picture_in_use())
     failures.extend(_check_mouse_movement_is_injected())
     failures.extend(_check_mouse())
 
@@ -2192,6 +2194,142 @@ def _check_enter_is_the_main_one() -> list[str]:
 
     print("Enter identity : main Enter (no E0 prefix), numpad Enter separate")
     return []
+
+
+def _check_a_bad_stop_key_does_not_kill_the_run() -> list[str]:
+    """A stop key Windows cannot watch is a bad setting, not a dead run.
+
+    Only a short list of keys can be watched for globally. The guard asked
+    about whatever the sequence named, several times a second, and an
+    unwatchable name raised out of the guard, through run_cycle, and into the
+    catch-all in run() -- so the sequence died with 'Unexpected error' before
+    running a single step. The opening log line already allowed for no stop
+    key at all, so the two halves disagreed.
+    """
+    def attempt(key: str):
+        messages: list[str] = []
+        sequence = engine_mod.Sequence(
+            name="stopping",
+            steps=[{"type": "press_key", "name": "work", "enabled": True,
+                    "key": "Q"}],
+            settings=engine_mod.Settings(
+                abort_key=key, failsafe_corner=False,
+                step_pause_min=0, step_pause_max=0,
+                cycle_pause_min=0, cycle_pause_max=0))
+        runner = engine_mod.Engine(
+            sequence, emit=lambda e: messages.append(e.get("message", "")),
+            dry_run=True)
+        runner.run(max_cycles=1)
+        return runner, messages
+
+    problems = []
+    for key in ("off", "", "F13", "Enter", "Ctrl"):
+        runner, messages = attempt(key)
+        if any("Unexpected error" in m for m in messages):
+            problems.append(f"a stop key of {key!r} killed the run outright")
+        elif not runner.cycles_completed:
+            problems.append(f"a stop key of {key!r} stopped the run completing")
+    # A name that cannot be watched has to say so, or it looks like a working
+    # stop key right up until you need it.
+    _runner, messages = attempt("F13")
+    if not any("watch for" in m for m in messages):
+        problems.append("an unwatchable stop key was accepted in silence")
+    # ...once, not several times a second.
+    if len([m for m in messages if "watch for" in m]) > 1:
+        problems.append("the unwatchable stop key was reported more than once")
+
+    # And a real one still stops things.
+    working, _messages = attempt("F8")
+    if not working.cycles_completed:
+        problems.append("a usable stop key stopped the run from completing")
+
+    print("Stop key        : unwatchable names warn once and the run carries on")
+    return problems
+
+
+def _check_tidying_never_deletes_a_picture_in_use() -> list[str]:
+    """tidy_images --apply deletes, so being wrong here loses work.
+
+    It decided what was unused by comparing the path a sequence stores against
+    one it built from the folder, as plain strings. The same picture can be
+    written several ways that all mean the same file: relative or absolute,
+    either slash, any case. A picture written one way and looked for another
+    matched nothing, so it was reported as used by nobody and deleted, while a
+    step was still pointing at it.
+    """
+    import json
+    import sys as sys_mod
+    import tempfile
+    from pathlib import Path as PathType
+
+    tools = PathType(__file__).resolve().parent.parent / "tools"
+    if str(tools) not in sys_mod.path:
+        sys_mod.path.insert(0, str(tools))
+    import tidy_images
+
+    import pixie.paths as paths_mod
+
+    kept = []
+    problems = []
+    saved = (paths_mod.APP_DIR, tidy_images.IMAGES_DIR, tidy_images.SEQUENCES_DIR)
+    try:
+        for description, spelling in (
+                ("relative", "images/button.png"),
+                ("backslashes", "images\\button.png"),
+                ("absolute", None),
+                ("other case", "Images/Button.png")):
+            with tempfile.TemporaryDirectory() as temp:
+                root = PathType(temp)
+                (root / "images").mkdir()
+                (root / "sequences").mkdir()
+                picture = root / "images" / "button.png"
+                picture.write_bytes(b"x")
+                stored = str(picture) if spelling is None else spelling
+
+                paths_mod.APP_DIR = root
+                tidy_images.IMAGES_DIR = root / "images"
+                tidy_images.SEQUENCES_DIR = root / "sequences"
+                (root / "sequences" / "job.json").write_text(
+                    json.dumps({"name": "job",
+                                "steps": [{"type": "click_image",
+                                           "image": stored}]}),
+                    encoding="utf-8")
+
+                used, _count = tidy_images.referenced()
+                unused = [p for p in tidy_images.IMAGES_DIR.iterdir()
+                          if p.is_file()
+                          and tidy_images.same_file_key(p) not in used]
+                if unused:
+                    problems.append(
+                        f"a picture stored as {description} ({stored!r}) was "
+                        "reported unused while a step still points at it, so "
+                        "--apply would delete it")
+                else:
+                    kept.append(description)
+
+        # ...and something genuinely unreferenced is still found, or the tool
+        # would be safe by the simple method of never finding anything.
+        with tempfile.TemporaryDirectory() as temp:
+            root = PathType(temp)
+            (root / "images").mkdir()
+            (root / "sequences").mkdir()
+            (root / "images" / "leftover.png").write_bytes(b"x")
+            paths_mod.APP_DIR = root
+            tidy_images.IMAGES_DIR = root / "images"
+            tidy_images.SEQUENCES_DIR = root / "sequences"
+            (root / "sequences" / "job.json").write_text(
+                json.dumps({"name": "job", "steps": []}), encoding="utf-8")
+            used, _count = tidy_images.referenced()
+            if not [p for p in tidy_images.IMAGES_DIR.iterdir()
+                    if tidy_images.same_file_key(p) not in used]:
+                problems.append("a picture no sequence mentions was not "
+                                "reported as unused, so the tool finds nothing")
+    finally:
+        paths_mod.APP_DIR, tidy_images.IMAGES_DIR, tidy_images.SEQUENCES_DIR = saved
+
+    print(f"Tidying pictures: kept when stored as {', '.join(kept)}; "
+          "still finds a genuine leftover")
+    return problems
 
 
 def _check_how_often_it_looks() -> list[str]:

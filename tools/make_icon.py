@@ -2,7 +2,7 @@
 
 Run this only if you want to change the icon; the result is committed.
 
-    python make_icon.py
+    python tools/make_icon.py
 """
 
 from __future__ import annotations

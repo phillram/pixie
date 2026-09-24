@@ -1,6 +1,6 @@
 """Build Pixie.exe.
 
-    python build_exe.py
+    python tools/build_exe.py
 
 Produces a single self-contained Pixie.exe in this folder, which needs no
 Python installed. Run it again after changing any of the code.

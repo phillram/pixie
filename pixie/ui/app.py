@@ -1,6 +1,6 @@
 """Pixie -- build a sequence of screen steps, then run it on a loop.
 
-    python gui.py
+    python -m pixie
 
 The left pane is the sequence. Pick a step to edit it on the right; every
 image, color, point and search area has a Capture button that freezes the

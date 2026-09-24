@@ -327,6 +327,9 @@ class Engine:
         # both exist to deal with the aftermath of an action, and a step that
         # only looked has no aftermath.
         self.acted = False
+        # Said once if the stop key turns out to be unwatchable, rather than
+        # on every guard, which is several times a second.
+        self._warned_about_stop_key = False
 
     # -- plumbing --------------------------------------------------------
 
@@ -340,13 +343,38 @@ class Engine:
         """Raise Aborted if anything says we should stop."""
         if self.stop_event.is_set():
             raise Aborted("stop requested")
-        if screen.key_pressed(self.sequence.settings.abort_key):
+        if self._stop_key_is_down():
             raise Aborted(f"{self.sequence.settings.abort_key} pressed")
         if self.sequence.settings.failsafe_corner:
             x, y = mouse.position()
             left, top, _, _ = screen.virtual_bounds()
             if x <= left + FAILSAFE_CORNER and y <= top + FAILSAFE_CORNER:
                 raise Aborted("mouse in the top-left corner")
+
+    def _stop_key_is_down(self) -> bool:
+        """Is the stop key held? False when there is no usable stop key.
+
+        A key Windows cannot be asked about is a bad setting, not a reason to
+        abandon the run. This used to ask regardless, so a sequence naming a
+        key outside the small watchable set -- or naming none at all, which
+        the opening log line already allows for -- died on its very first
+        guard with 'Unexpected error', before running a single step.
+
+        The other ways to stop (the Stop button, the corner, the window's own
+        hotkey) are unaffected, which is why carrying on is safe.
+        """
+        key = self.sequence.settings.abort_key
+        if not key or key.lower() in ("off", "none"):
+            return False
+        try:
+            return bool(screen.key_pressed(key))
+        except ValueError:
+            if not self._warned_about_stop_key:
+                self._warned_about_stop_key = True
+                self.log(f"    {key!r} is not a key Pixie can watch for, so "
+                         "there is no stop key this run. The Stop button and "
+                         "the top-left corner still work.", "error")
+            return False
 
     def _sleep(self, seconds: float) -> None:
         deadline = time.monotonic() + seconds

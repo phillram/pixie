@@ -15,15 +15,33 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 
 import _bootstrap  # noqa: F401  (sys.path)
 
-from pixie.paths import APP_DIR, IMAGES_DIR, SEQUENCES_DIR
+import pixie.paths as paths
+from pixie.paths import IMAGES_DIR, SEQUENCES_DIR
+
+
+def same_file_key(path) -> str:
+    """One spelling of a path, for deciding whether two names mean one file.
+
+    A sequence can hold the same picture as 'images/b.png', as an absolute
+    path, or with either slash or a different case, and Windows treats all of
+    them as the same file. Comparing the raw strings meant a picture written
+    one way and looked for another matched nothing, was reported as used by
+    nobody, and was deleted -- while a step was still pointing at it.
+    """
+    return os.path.normcase(os.path.abspath(str(path)))
 
 
 def referenced() -> tuple[set[str], int]:
-    """Every image path mentioned by a saved sequence, and how many files."""
+    """Every image a saved sequence points at, and how many files were read.
+
+    Stored paths go through the same resolve() the engine uses, so the tool
+    cannot decide a path means something different from what a run would.
+    """
     used: set[str] = set()
     sequences = sorted(SEQUENCES_DIR.glob("*.json"))
     for path in sequences:
@@ -37,7 +55,7 @@ def referenced() -> tuple[set[str], int]:
             raise SystemExit(2) from None
         for step in data.get("steps", []):
             if isinstance(step, dict) and step.get("image"):
-                used.add(str(step["image"]).replace("\\", "/"))
+                used.add(same_file_key(paths.resolve(str(step["image"]))))
     return used, len(sequences)
 
 
@@ -53,8 +71,7 @@ def main() -> int:
 
     used, sequence_count = referenced()
     files = sorted(p for p in IMAGES_DIR.iterdir() if p.is_file())
-    unused = [p for p in files
-              if p.relative_to(APP_DIR).as_posix() not in used]
+    unused = [p for p in files if same_file_key(p) not in used]
 
     print(f"{len(files)} pictures in images/, "
           f"{sequence_count} sequence file(s) checked.")

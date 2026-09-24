@@ -987,7 +987,9 @@ nobody is looking. So each of these has exactly one home:
 | Mouse buttons | `steps.BUTTONS` | `mouse.click` knows each one |
 | Where to aim on a match | `steps.ANCHORS` | no two aim at the same pixel |
 | Default values for a field | the `Field` declaration | the engine has no `step.get(key, literal)` restating one |
-| Commands in `--help` | the CLI docstring | every file it tells you to run exists |
+| What a stored image path means | `paths.resolve` | `tidy_images` decides with it, rather than its own string compare |
+| What each setting is called | the `Field` declaration | `tune_color` prints those labels rather than its own |
+| Commands printed at you | the code that prints them | every script named in `pixie/` or `tools/` exists |
 | Keys Pixie can send | `keyboard.KEYS` | no two fold onto one name, all have plain English, extended flags name real keys |
 
 `check_wiring.py` does all of those except the keyboard, which needs

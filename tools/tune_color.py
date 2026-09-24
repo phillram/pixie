@@ -4,7 +4,7 @@ Drag a box over the thing you want Pixie to detect -- a glowing border, a
 highlight, a colored button -- and this reports the settings to type into the
 step, along with how much of the box they would actually match.
 
-    python tune_color.py
+    python tools/tune_color.py
 
 The same thing is built into Pixie: the "Sample an area..." button beside any
 color that can be matched by hue. This is here for when you want the numbers
@@ -20,8 +20,19 @@ import sys
 
 import _bootstrap  # noqa: F401  (sys.path)
 
+from pixie.core import steps as step_defs
 from pixie.ui import capture
 from pixie.system import screen
+
+# The step editor's own words for each setting. Restating them here meant the
+# tool told you to set "Tolerance" while the editor called it "How far off it
+# may be", and you went looking for a box that was not there.
+_FIELDS = step_defs.STEP_TYPES["wait_for_color_in_area"].field_map()
+
+
+def label(key: str) -> str:
+    spec = _FIELDS.get(key)
+    return spec.label if spec else key
 
 # Where each color name starts, in degrees.
 HUE_NAMES = (
@@ -71,12 +82,15 @@ def main() -> int:
     print("=" * 62)
     print("PUT THESE INTO THE STEP")
     print("=" * 62)
-    print(f"  Color          {advice.rgb}   "
-          f"(#{advice.rgb[0]:02x}{advice.rgb[1]:02x}{advice.rgb[2]:02x})")
-    print("  Match by       hue")
-    print(f"  Tolerance      {advice.tolerance}")
-    print(f"  Min saturation {advice.min_saturation}")
-    print(f"  Min brightness {advice.min_brightness}")
+    shown = (("color", f"{advice.rgb}   "
+              f"(#{advice.rgb[0]:02x}{advice.rgb[1]:02x}{advice.rgb[2]:02x})"),
+             ("match", "hue"),
+             ("tolerance", advice.tolerance),
+             ("min_saturation", advice.min_saturation),
+             ("min_brightness", advice.min_brightness))
+    width = max(len(label(key)) for key, _ in shown)
+    for key, value in shown:
+        print(f"  {label(key):{width}}   {value}")
     print("=" * 62)
     print()
 
@@ -87,7 +101,7 @@ def main() -> int:
     else:
         print("This color is flat enough that 'rgb' mode works just as well.")
     print()
-    print(f"Set 'Smallest patch' below {advice.matched} -- try "
+    print(f"Set '{label('min_pixels')}' below {advice.matched} -- try "
           f"{max(20, advice.matched // 4)} to allow for the highlight being "
           "partly hidden or smaller.")
     return 0

@@ -308,19 +308,26 @@ def _check_the_engine_keeps_no_defaults_of_its_own() -> list[str]:
 
     print(f"  {len(declared)} declared fields, no second copy of any default")
 
-    # --help prints the CLI's docstring verbatim, so a command named there
-    # that no longer exists is instructions that cannot be followed. It named
-    # automator.py and gui.py for a while after both were renamed away.
+    # Instructions that cannot be followed. --help prints a docstring
+    # verbatim, and the tools print commands at people mid-run, so a script
+    # named in either has to still be there. automator.py, gui.py and
+    # capture.py were all named long after they were renamed or removed.
     import re
 
-    from pixie import cli
-
     root = Path(__file__).resolve().parent.parent
-    for text in (cli.__doc__ or "", engine.__doc__ or ""):
-        for named in re.findall(r"python ([A-Za-z_][\w/]*\.py)", text):
-            if not (root / named).exists():
-                problems.append(f"the --help text tells you to run {named!r}, "
-                                "which is not there any more")
+    sources = sorted((root / "pixie").rglob("*.py")) + sorted((root / "tools").glob("*.py"))
+    for source in sources:
+        text = source.read_text(encoding="utf-8")
+        for line_number, line in enumerate(text.splitlines(), start=1):
+            for named in re.findall(r"python ([A-Za-z_][\w/]*\.py)", line):
+                if (root / named).exists():
+                    continue
+                where = source.relative_to(root).as_posix()
+                problems.append(f"{where} line {line_number} tells you to run "
+                                f"{named!r}, which is not there. Use "
+                                "'python -m pixie' or the path under tools/.")
+
+    print(f"  {len(sources)} modules checked for commands that no longer exist")
     return problems
 
 

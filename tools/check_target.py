@@ -4,7 +4,7 @@ Fullscreen applications are the awkward case. Some render in a way that screen
 capture cannot read (you get a black frame), and some refuse synthetic clicks.
 Find out in ten seconds rather than after building a whole sequence.
 
-    python check_target.py
+    python tools/check_target.py
 
 Switch to your application during the countdown. It reports what it found and
 saves a screenshot so you can see exactly what the matcher would be working
@@ -117,7 +117,7 @@ def main() -> int:
         for problem in problems:
             print(f"  - {problem}")
         return 1
-    print("Looks workable. Next: python gui.py")
+    print("Looks workable. Next: python -m pixie")
     return 0
 
 
