@@ -876,6 +876,30 @@ cycles. Untick `Minimize while running` if you would rather watch.
 writes every click it would have sent to the log, without sending any. That is
 how you confirm the coordinates are right before anything real happens.
 
+### Leaving it running for hours
+
+**Nothing is written to disk.** The log lives in the window and nowhere else,
+so there are no files to rotate and nothing accumulating on your drive. Closing
+Pixie loses it. Copy anything you want to keep before you close, or run it from
+the command line and redirect.
+
+**The log is capped at 5,000 lines** and trimmed back to 4,000 when it
+overflows, saying so where it cut. A busy loop writes about ten lines a second,
+which is the best part of a million by morning, and Tk holds every one of them
+with its tags and gets slower at appending as it goes. The newest lines are the
+ones worth having.
+
+**Memory is flat.** Measured over 8,000 engine cycles: working set steady at
+42.5MB, handles steady at 345. Over 3,200 real screen captures: GDI objects
+steady at 3, user objects at 1, working set moving less than a megabyte after
+the first batch. The one thing that did grow without limit was each step's
+record of what it usually finds, which is now a window of the last 50.
+
+**Nothing leaves the machine.** There is no network code in Pixie at all, and
+the four things it depends on - mss, OpenCV, NumPy and Pillow - are local image
+and capture libraries with nothing to phone home to. It reads your screen and
+writes to `images/` and `sequences/` beside itself.
+
 For an unattended run, from a shortcut or a scheduled task:
 
 ```

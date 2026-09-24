@@ -134,6 +134,7 @@ def main() -> int:
     failures.extend(_check_enter_is_the_main_one())
     failures.extend(_check_look_alike_keys_are_told_apart())
     failures.extend(_check_how_often_it_looks())
+    failures.extend(_check_nothing_grows_forever_during_a_run())
     failures.extend(_check_a_bad_stop_key_does_not_kill_the_run())
     failures.extend(_check_tidying_never_deletes_a_picture_in_use())
     failures.extend(_check_mouse_movement_is_injected())
@@ -2194,6 +2195,59 @@ def _check_enter_is_the_main_one() -> list[str]:
 
     print("Enter identity : main Enter (no E0 prefix), numpad Enter separate")
     return []
+
+
+def _check_nothing_grows_forever_during_a_run() -> list[str]:
+    """What a run remembers has to stop growing, or hours cost more than minutes.
+
+    The per-step size history grew by one number on every successful find and
+    was re-sorted on every one too, so a step checked every couple of seconds
+    added tens of thousands a day and the cost of using them climbed all run.
+    It keeps a window now, which also means the yardstick follows a target
+    that legitimately changes size rather than being pinned to this morning.
+    """
+    class Hit:
+        def __init__(self, pixels):
+            self.pixels = pixels
+
+    problems = []
+    runner = engine_mod.Engine(engine_mod.Sequence(name="x"), dry_run=True)
+    step = {"type": "wait_for_color_in_area", "min_pixels": 40}
+
+    for n in range(engine_mod.MATCH_HISTORY * 40):
+        runner._odd_size(step, Hit(10_000 + (n % 7)))
+
+    held = sum(len(seen) for seen in runner._match_sizes.values())
+    if held > engine_mod.MATCH_HISTORY:
+        problems.append(f"after {engine_mod.MATCH_HISTORY * 40} finds the step "
+                        f"remembers {held} sizes, over its own cap of "
+                        f"{engine_mod.MATCH_HISTORY}")
+
+    # It still has to do its job: a find far smaller than usual gets called out.
+    said: list[str] = []
+    runner.emit = lambda event: said.append(event.get("message", ""))
+    runner._odd_size(step, Hit(71))
+    if not any("far smaller" in message for message in said):
+        problems.append("a find a hundred times smaller than usual was not "
+                        "called out, so the window broke the check it feeds")
+
+    # ...and the window follows a target that genuinely changes size, rather
+    # than nagging forever about a new normal.
+    quiet = engine_mod.Engine(engine_mod.Sequence(name="y"), dry_run=True)
+    for _ in range(engine_mod.MATCH_HISTORY * 2):
+        quiet._odd_size(step, Hit(10_000))
+    for _ in range(engine_mod.MATCH_HISTORY * 2):
+        quiet._odd_size(step, Hit(600))          # the target really did shrink
+    complaints: list[str] = []
+    quiet.emit = lambda event: complaints.append(event.get("message", ""))
+    quiet._odd_size(step, Hit(600))
+    if any("far smaller" in message for message in complaints):
+        problems.append("a target that settled at a new smaller size is still "
+                        "being reported as odd, so the yardstick never moved on")
+
+    print(f"Run growth      : {engine_mod.MATCH_HISTORY * 40} finds -> "
+          f"{held} remembered, still spots an odd one, follows a new normal")
+    return problems
 
 
 def _check_a_bad_stop_key_does_not_kill_the_run() -> list[str]:

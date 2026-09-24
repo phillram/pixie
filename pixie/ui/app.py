@@ -60,6 +60,12 @@ OFF = "Off"  # what the start/stop key is set to when you don't want one
 HOTKEYS = list(screen.hotkey_names())
 HOTKEY_POLL_MS = 90  # how often to ask Windows whether the start key is down
 
+# How long the log is allowed to get, and what it is cut back to when it
+# overflows. A run left going overnight writes hundreds of thousands of lines,
+# and Tk keeps every one of them in memory and slows down appending to them.
+LOG_MAX_LINES = 5000
+LOG_KEEP_LINES = 4000
+
 # Both from the engine, which owns what these settings mean.
 PARK_LABELS = engine_mod.PARK_LABELS
 PARK_MODES = {label: mode for mode, label in PARK_LABELS.items()}
@@ -929,8 +935,28 @@ class App:
         self.log_text.configure(state="normal")
         stamp = time.strftime("%H:%M:%S")
         self.log_text.insert("end", f"{stamp}  {message}\n", level)
+        self._trim_log()
         self.log_text.see("end")
         self.log_text.configure(state="disabled")
+
+    def _trim_log(self) -> None:
+        """Drop the oldest lines once there are too many.
+
+        A loop can write ten lines a second, which is most of a million by
+        morning. Tk holds every one of them, with its tags, and gets steadily
+        slower at appending to them. The log is for watching what is
+        happening now, so old lines are worth less than a window that still
+        responds.
+
+        Trimming back past the limit rather than to it means this happens
+        once every few thousand lines instead of on every single one.
+        """
+        lines = int(self.log_text.index("end-1c").split(".")[0])
+        if lines <= LOG_MAX_LINES:
+            return
+        self.log_text.delete("1.0", f"{lines - LOG_KEEP_LINES}.0")
+        self.log_text.insert("1.0", f"(earlier lines dropped, keeping the "
+                                    f"last {LOG_KEEP_LINES:,})\n", "muted")
 
     def clear_log(self) -> None:
         self.log_text.configure(state="normal")

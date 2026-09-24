@@ -1236,6 +1236,51 @@ def check_indenting_steps():
     return problems
 
 
+def check_the_log_stays_a_sensible_size():
+    """The log is capped, so an overnight run does not fill memory with it.
+
+    A busy loop writes about ten lines a second. Left alone that is most of a
+    million lines by morning, and Tk holds every one of them with its tags and
+    gets steadily slower at appending. Nothing is written to disk, so these
+    lines are the only copy, and they are worth less the older they get.
+    """
+    app.clear_log()
+    problems = []
+
+    def lines():
+        return int(app.log_text.index("end-1c").split(".")[0])
+
+    for n in range(gui.LOG_MAX_LINES + 600):
+        app.log(f"line {n}")
+
+    held = lines()
+    if held > gui.LOG_MAX_LINES:
+        problems.append(f"after {gui.LOG_MAX_LINES + 600} lines the log holds "
+                        f"{held}, over its own limit of {gui.LOG_MAX_LINES}")
+    if held < gui.LOG_KEEP_LINES // 2:
+        problems.append(f"the log trimmed down to {held} lines, far more than "
+                        "asked - it is throwing away what you are watching")
+
+    # The newest line has to survive. Trimming the wrong end would be worse
+    # than not trimming at all.
+    body = app.log_text.get("1.0", "end")
+    last = f"line {gui.LOG_MAX_LINES + 600 - 1}"
+    if last not in body:
+        problems.append(f"the most recent line ({last}) was trimmed away")
+    if "line 0\n" in body:
+        problems.append("the oldest line survived, so the wrong end was cut")
+    if "earlier lines dropped" not in body:
+        problems.append("the log was trimmed without saying so")
+
+    app.clear_log()
+    if lines() != 1:
+        problems.append("clearing the log did not empty it")
+
+    print(f"Log size ok: {gui.LOG_MAX_LINES + 600} lines written, {held} held, "
+          "newest kept")
+    return problems
+
+
 def check_no_hidden_keybinds():
     """The window answers to the declared shortcuts and nothing else.
 
@@ -1528,7 +1573,7 @@ for check in (check_boxes_can_be_typed_into, check_panes_can_be_dragged,
               check_settings_stick, check_add_menu_is_grouped,
               check_indenting_steps,
               check_moving_keeps_groups_together,
-              check_no_hidden_keybinds):
+              check_no_hidden_keybinds, check_the_log_stays_a_sensible_size):
     try:
         failures.extend(check())
     except Exception as error:  # noqa: BLE001

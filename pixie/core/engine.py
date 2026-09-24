@@ -12,6 +12,7 @@ import math
 import random
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
@@ -25,6 +26,10 @@ from pixie.paths import APP_DIR as PROJECT_DIR
 FAILSAFE_CORNER = 5  # mouse within this many pixels of the top-left aborts
 GUARD_INTERVAL = 0.05
 IDLE_NOTICE_SECONDS = 15.0  # how often to say 'still waiting' while idling
+# How many recent match sizes a step remembers, for spotting one that comes
+# back far smaller than usual. Enough for a steady median, small enough that
+# a run lasting days costs no more than one lasting minutes.
+MATCH_HISTORY = 50
 
 # Every level `log` may be called with. The GUI colors them, and
 # tools/check_wiring.py fails if it has no color for one of these.
@@ -314,7 +319,7 @@ class Engine:
         # How big each color step's matches usually are, so one that comes
         # back far smaller than the rest can be called out. Keyed by the step
         # object itself, and only meaningful within a single run.
-        self._match_sizes: dict[int, list[int]] = {}
+        self._match_sizes: dict[int, deque[int]] = {}
         # Whether the section being run allows the cursor to be moved after a
         # click. Set from its divider on the way in, like the wait cap.
         self.park_here = True
@@ -658,8 +663,16 @@ class Engine:
         It only looks wrong beside the other times the same step ran. So the
         step's own history is the yardstick: no threshold to guess at, and it
         calibrates itself to whatever is being looked for.
+
+        Only the recent past is kept. An unbounded history grew by one number
+        per find forever -- a step checked every couple of seconds adds tens
+        of thousands a day -- and every find re-sorted the lot to take a
+        median, so the cost climbed for as long as the run lasted. A window
+        also means the yardstick follows a target that legitimately changes
+        size, instead of being anchored to whatever it looked like at nine
+        o'clock this morning.
         """
-        seen = self._match_sizes.setdefault(id(step), [])
+        seen = self._match_sizes.setdefault(id(step), deque(maxlen=MATCH_HISTORY))
         if len(seen) >= 3:
             usual = sorted(seen)[len(seen) // 2]
             if usual and hit.pixels * 4 < usual:
@@ -669,7 +682,11 @@ class Engine:
                          "else that happens to be the right color. Raise "
                          f"'Smallest patch' from {floor:,} towards "
                          f"{usual // 2:,}.", "warn")
-                return      # a stray find must not drag the usual size down
+        # Odd finds are recorded like any other. A median over a window is
+        # already proof against a stray or two, and refusing to record them
+        # meant a target that genuinely settled at a new smaller size was
+        # never learned: the yardstick stayed where it was and every single
+        # find got the same complaint, forever.
         seen.append(hit.pixels)
 
     def _edge_warning(self, hit: Any, step: dict[str, Any]) -> None:
