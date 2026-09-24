@@ -196,42 +196,40 @@ class SettingsDialog:
 
     RANGES = (
         ("step_pause", "Pause after each step",
-         "Breathing room so the application can react. Give the two boxes "
-         "different values and the pause varies randomly between them, which "
-         "also stops every cycle taking exactly the same time."),
+         "Breathing room after a step that did something, so the application "
+         "can react."),
         ("section_pause", "Pause between sections",
-         "Waited when Pixie moves on to the next section, or starts the "
-         "current one again. Separate from the step pause, so you can have "
-         "one without the other - set both to 0 to move between screens with "
-         "no delay at all."),
+         "Waited when a section hands over, or starts itself again. Set both "
+         "to 0 to move between screens with no delay."),
         ("cycle_pause", "Pause between cycles",
-         "One cycle is one trip through every section. This is waited at the "
-         "end of that trip, before the sequence starts again from its very "
-         "first step."),
+         "Waited at the end of a trip through every section, before the "
+         "sequence starts again."),
         ("repeat_gap", "Gap between repeats",
          "Between the clicks of a double-click, and between repeated taps of "
-         "one key step. Drawn fresh every time, so no two are the same "
-         "length. Keep it under half a second or two clicks stop reading as "
-         "a double-click."),
+         "one key step. Under half a second, or two clicks stop reading as a "
+         "double-click."),
         ("press_hold", "How long a press lasts",
-         "How long a mouse button or a key stays down. Raise it if an "
-         "application seems to miss clicks or key presses entirely; some "
-         "sample input once a frame and can step over a short one."),
+         "How long a button or key stays down. Raise it if an application "
+         "misses presses; some sample input once a frame."),
         ("press_settle", "Pause before pressing",
-         "Between the cursor arriving somewhere and the button going down. "
-         "Some applications will not take a click until they have noticed "
-         "the pointer arrive, and act on wherever it was before otherwise."),
+         "Between arriving somewhere and pressing. Raise it for anything that "
+         "has to notice the pointer before it will take a click."),
         ("travel_speed", "Cursor travel speed",
-         "How fast the cursor moves when 'Move the cursor there' is ticked "
-         "below. A speed rather than a time, so a long move takes longer "
-         "than a short one. Capped at 0.8 seconds however far it has to go.",
+         "How fast the cursor moves when it is travelling rather than "
+         "appearing. Capped at 0.8 seconds however far it goes.",
          "pixels a second"),
     )
 
     def __init__(self, parent: tk.Misc, settings: engine_mod.Settings,
-                 scale: float = 1.0) -> None:
+                 scale: float = 1.0,
+                 show_hints: tk.BooleanVar | None = None) -> None:
         self.settings = settings
         self.saved = False
+        # Shared with the editor panel, so "Hints" means one thing in the
+        # whole application rather than two things in two places.
+        self.show_hints = show_hints if show_hints is not None \
+            else tk.BooleanVar(value=False)
+        self.hints: list[tuple[ttk.Label, tk.Misc | None]] = []
         self.window = tk.Toplevel(parent)
         self.window.title("Settings")
         theme.dark_titlebar(self.window)
@@ -244,6 +242,10 @@ class SettingsDialog:
 
         self.vars: dict[str, tk.Variable] = {}
         row = 0
+        ttk.Checkbutton(frame, text="Hints", variable=self.show_hints,
+                        command=self._hints_toggled).grid(
+            row=row, column=1, sticky="e")
+        row += 1
         ttk.Label(frame, text="These belong to this sequence, not to Pixie, so "
                               "different jobs can have different timing. Saving "
                               "here saves the sequence too.",
@@ -280,11 +282,10 @@ class SettingsDialog:
             side="left", padx=(6, 0))
         self.vars["wait_timeout"] = wait_var
         row += 1
-        ttk.Label(frame, text="How long any step that waits for an image or a color "
-                              "keeps looking, unless that step says otherwise. Steps "
-                              "that run every time round a loop and usually find "
-                              "nothing are the ones worth setting individually - "
-                              "their wait is paid on every single pass.",
+        ttk.Label(frame, text="How long a step waits for its image or color, unless "
+                              "it says otherwise. Worth shortening on a step that "
+                              "runs every lap and usually finds nothing: its wait "
+                              "is paid every pass.",
                   style="Muted.TLabel", wraplength=int(440 * scale),
                   justify="left").grid(row=row, column=0, columnspan=2,
                                        sticky="w", pady=(0, 10))
@@ -297,8 +298,8 @@ class SettingsDialog:
             row=row, column=1, sticky="w", pady=(4, 0))
         self.vars["poll_interval"] = poll_var
         row += 1
-        ttk.Label(frame, text="Seconds between looks while waiting for an image "
-                              "or color. Smaller reacts faster, uses more CPU.",
+        ttk.Label(frame, text="Seconds between looks while a step waits. Smaller "
+                              "reacts faster and costs more CPU.",
                   style="Muted.TLabel", wraplength=int(440 * scale),
                   justify="left").grid(row=row, column=0, columnspan=2,
                                        sticky="w", pady=(0, 10))
@@ -311,8 +312,8 @@ class SettingsDialog:
                      values=[OFF] + HOTKEYS).grid(row=row, column=1, sticky="w",
                                                   pady=(4, 0))
         row += 1
-        ttk.Label(frame, text="One key that starts the run and stops it again, from "
-                              "anywhere. Press it once to start, once more to stop.",
+        ttk.Label(frame, text="Starts the run, and stops it if one is going. Works "
+                              "from any window.",
                   style="Muted.TLabel", wraplength=int(440 * scale),
                   justify="left").grid(row=row, column=0, columnspan=2,
                                        sticky="w", pady=(0, 10))
@@ -324,10 +325,10 @@ class SettingsDialog:
         ttk.Combobox(frame, textvariable=self.abort_var, state="readonly", width=10,
                      values=HOTKEYS).grid(row=row, column=1, sticky="w", pady=(4, 0))
         row += 1
-        ttk.Label(frame, text="Stops the run and nothing else. Works even when "
-                              "another window has focus.",
-                  style="Muted.TLabel").grid(row=row, column=0, columnspan=2,
-                                             sticky="w", pady=(0, 10))
+        ttk.Label(frame, text="Stops a run and nothing else.",
+                  style="Muted.TLabel", wraplength=int(440 * scale),
+                  justify="left").grid(row=row, column=0, columnspan=2,
+                                       sticky="w", pady=(0, 10))
         row += 1
 
         ttk.Label(frame, text="After each step").grid(row=row, column=0, sticky="w",
@@ -347,11 +348,10 @@ class SettingsDialog:
                    command=self._pick_park_area).pack(side="left", padx=(8, 0))
         self.park_area_label.pack(side="left", padx=(8, 0))
         row += 1
-        ttk.Label(frame, text="Parks the cursor somewhere harmless so it can't sit "
-                              "over the next thing Pixie needs to see. 'Middle of the "
-                              "screen' means the middle of your primary monitor.\n"
-                              "Drag a box rather than clicking one spot and the "
-                              "cursor lands somewhere different inside it every time.",
+        ttk.Label(frame, text="Where the cursor goes after a click, so it cannot "
+                              "sit over the next thing Pixie looks at. Drag a box "
+                              "and it lands somewhere different inside it every "
+                              "time.",
                   style="Muted.TLabel", wraplength=int(440 * scale),
                   justify="left").grid(row=row, column=0, columnspan=2,
                                        sticky="w", pady=(0, 10))
@@ -367,12 +367,10 @@ class SettingsDialog:
                      values=list(step_defs.TRAVEL_STYLE_LABELS.values())).grid(
             row=row, column=1, sticky="w", pady=(4, 0))
         row += 1
-        ttk.Label(frame, text="The journey to a click and the one away from it, "
-                              "at the speed set above. A warped cursor is "
-                              "somewhere, then somewhere else, having crossed "
-                              "nothing in between, so an application watching the "
-                              "pointer never sees it approach. A straight line is "
-                              "seen, but nothing holding a mouse draws one.",
+        ttk.Label(frame, text="The journey to a click and the one away from it. "
+                              "Appearing is instant but nothing sees the pointer "
+                              "approach, which is what opens a hover state. "
+                              "Travelling drags across whatever lies between.",
                   style="Muted.TLabel", wraplength=int(440 * scale),
                   justify="left").grid(row=row, column=0, columnspan=2,
                                        sticky="w", pady=(0, 10))
@@ -391,7 +389,9 @@ class SettingsDialog:
         ttk.Button(buttons, text="Save", style="Accent.TButton",
                    command=self._save).pack(side="right")
 
+        self.hints = self._find_hints(frame)
         self._stretch_hints(frame, int(20 * scale))
+        self._hints_toggled()
 
         self.window.update_idletasks()
         x = parent.winfo_rootx() + (parent.winfo_width() - self.window.winfo_width()) // 2
@@ -399,7 +399,68 @@ class SettingsDialog:
         self.window.geometry(f"+{x}+{y}")
 
     @staticmethod
-    def _stretch_hints(frame: ttk.Frame, padding: int) -> None:
+    def _is_hint(widget: tk.Misc) -> bool:
+        """Is this one of the explanatory paragraphs?
+
+        A muted label spanning both columns is a paragraph; a label sitting in
+        one column beside its boxes is a caption. Asking whether it happened
+        to be given a wraplength is a fact about how it was built, and one
+        paragraph had been written without one, so it was never stretched and
+        never hidden.
+        """
+        if not isinstance(widget, ttk.Label):
+            return False
+        try:
+            if str(widget.cget("style")) != "Muted.TLabel":
+                return False
+            return int(widget.grid_info().get("columnspan", 1)) > 1
+        except (tk.TclError, ValueError):
+            return False
+
+    @classmethod
+    def _find_hints(cls, frame: ttk.Frame) -> list[tuple[ttk.Label, tk.Misc | None]]:
+        """Every paragraph, paired with the caption it explains.
+
+        The caption is whatever sits in the first column of the row above.
+        """
+        rows: dict[int, list[tk.Misc]] = {}
+        for child in frame.winfo_children():
+            where = child.grid_info()
+            if where:
+                rows.setdefault(int(where["row"]), []).append(child)
+
+        found = []
+        for row, widgets in sorted(rows.items()):
+            for child in widgets:
+                if not cls._is_hint(child):
+                    continue
+                above = [w for w in rows.get(row - 1, [])
+                         if int(w.grid_info().get("column", 0)) == 0
+                         and w is not child]
+                found.append((child, above[0] if above else None))
+        return found
+
+    def _hints_toggled(self) -> None:
+        """Show or hide the paragraphs, and keep them reachable either way."""
+        showing = bool(self.show_hints.get())
+        for label, caption in self.hints:
+            if showing:
+                label.grid()
+            else:
+                label.grid_remove()
+            if caption is None:
+                continue
+            # One tooltip per caption, emptied while its paragraph is on
+            # screen rather than made and destroyed as you toggle.
+            existing = getattr(caption, "_hint_tip", None)
+            if existing is None:
+                existing = theme.tip(caption, "", wraplength=380)
+                caption._hint_tip = existing
+            existing.update("" if showing else str(label.cget("text")))
+        self.window.update_idletasks()
+
+    @classmethod
+    def _stretch_hints(cls, frame: ttk.Frame, padding: int) -> None:
         """Wrap every paragraph to the dialog's real width.
 
         The dialog sizes itself to its widest row, and which row that is
@@ -416,13 +477,7 @@ class SettingsDialog:
         if room <= 0:
             return
         for child in frame.winfo_children():
-            if not isinstance(child, ttk.Label):
-                continue
-            try:
-                wraps = int(child.cget("wraplength") or 0)
-            except (tk.TclError, ValueError):
-                continue
-            if wraps:
+            if cls._is_hint(child):
                 child.configure(wraplength=room)
 
     def _park_area_text(self) -> str:
@@ -2072,7 +2127,8 @@ class App:
         if self.running:
             messagebox.showinfo("Running", "Stop the run before changing settings.")
             return
-        if SettingsDialog(self.root, self.sequence.settings, self.scale).run():
+        if SettingsDialog(self.root, self.sequence.settings, self.scale,
+                          show_hints=self.show_hints).run():
             self.mark_dirty()
             self._refresh_run_tip()
             # These live in the sequence file, so they are only remembered if

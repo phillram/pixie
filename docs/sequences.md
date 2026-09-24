@@ -7,9 +7,12 @@ For getting a color step to find the right thing, see
 
 ## Working in the editor
 
-**Hints**, at the top of the panel, shows an explanation under every setting.
-It is off by default, so the panel is just the settings. With it off, hover a
-setting's name to get its explanation, or the step title for the step's.
+**Hints** shows an explanation under every setting. It is off by default, so a
+panel is just its settings. With it off, hover a setting's name to get its
+explanation, or the step title for the step's.
+
+The box is in the step editor and in Settings, and it is the same box: turn it
+on in one and it is on in both.
 
 ### Names, copies and pictures
 

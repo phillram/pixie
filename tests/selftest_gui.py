@@ -1082,7 +1082,7 @@ def check_settings_stick():
     class FakeDialog:
         """Stands in for the modal: sets what the user would have set."""
 
-        def __init__(self, parent, settings, scale=1.0):
+        def __init__(self, parent, settings, scale=1.0, show_hints=None):
             self.settings = settings
 
         def run(self):
@@ -1233,6 +1233,72 @@ def check_indenting_steps():
 
     print("Indenting ok: indents under a check, refuses at the top, "
           "un-indents when its check is deleted")
+    return problems
+
+
+def check_settings_hints_can_be_hidden():
+    """Settings has a paragraph per row and nine rows of numbers.
+
+    The same Hints box the editor uses hides them there too, and a hidden
+    paragraph has to stay reachable or the dialog becomes a wall of unexplained
+    boxes. One hint had been written without a wraplength, and the old test for
+    "is this a paragraph" asked exactly that, so it was neither stretched nor
+    hidden.
+    """
+    problems = []
+    box = tk.BooleanVar(value=False)
+    dialog = gui.SettingsDialog(root, engine_mod.Settings(), 1.0, show_hints=box)
+    try:
+        if len(dialog.hints) < 10:
+            problems.append(f"only {len(dialog.hints)} paragraphs found in "
+                            "Settings, so some are not being managed")
+
+        # grid_remove leaves a widget with no grid_info; winfo_ismapped is no
+        # use here, because the test window is withdrawn and nothing is mapped.
+        hidden = [label for label, _caption in dialog.hints
+                  if not label.grid_info()]
+        if len(hidden) != len(dialog.hints):
+            showing = [str(label.cget("text"))[:40]
+                       for label, _c in dialog.hints if label.grid_info()]
+            problems.append(f"with Hints off, {len(showing)} paragraphs were "
+                            f"still on screen: {showing}")
+
+        # Hidden does not mean lost: the caption above each one explains it.
+        without = [str(label.cget("text"))[:40] for label, caption in dialog.hints
+                   if caption is not None
+                   and not getattr(caption, "_hint_tip", None)]
+        if without:
+            problems.append(f"paragraphs hidden with nothing to reach them "
+                            f"by: {without}")
+        tips = [getattr(caption, "_hint_tip", None)
+                for _label, caption in dialog.hints if caption is not None]
+        if any(tip is not None and not tip.text for tip in tips):
+            problems.append("a caption's tooltip was empty while its "
+                            "paragraph was hidden")
+
+        short = dialog.window.winfo_reqheight()
+        box.set(True)
+        dialog._hints_toggled()
+        root.update()
+        tall = dialog.window.winfo_reqheight()
+        back = [label for label, _c in dialog.hints if label.grid_info()]
+        if len(back) != len(dialog.hints):
+            problems.append(f"turning Hints on brought back {len(back)} of "
+                            f"{len(dialog.hints)} paragraphs")
+        if tall <= short:
+            problems.append(f"showing the paragraphs did not make the dialog "
+                            f"taller: {short} -> {tall}")
+        # ...and the tooltips go quiet again, rather than repeating what is
+        # already on screen.
+        loud = [tip for tip in tips if tip is not None and tip.text]
+        if loud:
+            problems.append(f"{len(loud)} tooltips still had text while the "
+                            "paragraphs were visible")
+    finally:
+        dialog.window.destroy()
+
+    print(f"Settings hints ok: {len(dialog.hints)} paragraphs hide and come "
+          f"back, {short}px -> {tall}px")
     return problems
 
 
@@ -1573,7 +1639,8 @@ for check in (check_boxes_can_be_typed_into, check_panes_can_be_dragged,
               check_settings_stick, check_add_menu_is_grouped,
               check_indenting_steps,
               check_moving_keeps_groups_together,
-              check_no_hidden_keybinds, check_the_log_stays_a_sensible_size):
+              check_no_hidden_keybinds, check_the_log_stays_a_sensible_size,
+              check_settings_hints_can_be_hidden):
     try:
         failures.extend(check())
     except Exception as error:  # noqa: BLE001
