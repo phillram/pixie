@@ -1,11 +1,10 @@
 # Pixie
 
 Pixie watches your screen, finds things on it, and clicks them. You build a
-sequence by pointing at what she should look for, then she repeats it until you
-tell her to stop.
+sequence by pointing at what to look for; it repeats until you stop it.
 
-It is for the kind of job that is too fiddly to script properly and too dull to
-do by hand: the same twelve clicks through the same four screens, over and over.
+For jobs too fiddly to script and too dull to do by hand: the same twelve clicks
+through the same four screens, over and over.
 
 Windows only. Dark themed.
 
@@ -24,11 +23,10 @@ Windows only. Dark themed.
 ## Getting it running
 
 Download `Pixie.exe` from the
-[latest release](https://github.com/phillram/pixie/releases/latest) and double
-click it. No Python, nothing to install. Put it in a folder of its own, because
-it creates `sequences/` and `images/` beside itself.
+[latest release](https://github.com/phillram/pixie/releases/latest). Put it in
+its own folder: it creates `sequences/` and `images/` beside itself.
 
-From source instead, with Python 3.10 or newer:
+From source, Python 3.10 or newer:
 
 ```
 pip install -r requirements.txt
@@ -38,52 +36,41 @@ python tools/build_exe.py      # produces Pixie.exe, about 70MB
 
 ## Your first sequence
 
-A sequence is a list of steps. Pixie runs them top to bottom, then starts again,
-looping until you stop her.
+A sequence is a list of steps, run top to bottom, then again from the top.
 
-Build one in the left pane, edit the selected step in the right pane, watch the
+Build it in the left pane, edit the selected step in the right pane, watch the
 log along the bottom. All three dividers drag, and where you put them is
 remembered.
 
 1. **Add step** → `Click an image`.
-2. Press **Capture** beside `Image`. The window hides, the screen freezes, and
-   you drag a box round the thing you want clicked.
-3. Press **Capture** beside `Area to search` and drag a box round the part of
-   the screen it appears in. Do this on every step: it is the single biggest
-   speed win, because scanning a whole desktop is roughly fifty times slower
-   than scanning a panel.
-4. Tick **Dry run** and press **Start**. Pixie detects everything and writes
-   every click she *would* have sent to the log, without sending any.
-5. Happy with the coordinates? Untick Dry run and go again.
+2. **Capture** beside `Image`. The window hides, the screen freezes, drag a box
+   round the thing to click.
+3. **Capture** beside `Area to search`, drag a box round the part of the screen
+   it appears in. Do this on every step: a panel scans about fifty times faster
+   than the whole desktop.
+4. Tick **Dry run** and press **Start**. Every click it would have sent goes to
+   the log instead.
+5. Untick Dry run and go again.
 
-Every image, color, point and region has that Capture button. Boxes are four
-editable numbers as well, so you can nudge an edge ten pixels without re-dragging
-the whole thing.
+Every image, color, point and region has a Capture button. Boxes are also four
+editable numbers, for nudging an edge without re-dragging.
 
 ### Seeing what a step will do
 
-Three buttons answer the questions a log cannot. None of them write anything to
-disk unless you press `Save picture...`.
+Three buttons, none of which write to disk unless you press `Save picture...`:
 
-**Test this step** runs only the selected step and reports what it found. The
-quickest way to tune a match without running everything.
+**Test this step** runs the selected step alone and reports what it found.
 
-**What matches?** works on any step that searches an area for a color. It shows
-your own screen back to you with every matching pixel tinted, each patch boxed
-and numbered in the order the step would use them, the rejected ones greyed out
-with the reason, and how saturated each one is. This is how you tell a highlight
-from a background.
+**What matches?** shows your screen back to you with every matching pixel
+tinted, each patch boxed and numbered in the order the step would use them, and
+the rejected ones greyed out with the reason. Color steps only.
 
-**Show the click** works on any step that clicks. A crosshair on the exact spot,
-at life size, with the thing it found boxed around it. It runs the step for real
-and intercepts only the click, so the crosshair is where the click would
-genuinely go rather than a second guess at it.
+**Show the click** puts a crosshair on the exact spot, at life size, with the
+match boxed around it. Runs the step for real, intercepting only the click.
 
 ## The steps
 
-**Add step** groups them under these headings and repeats the short description
-beside each name, so you can tell `Click an image` from `Click an image if it
-appears` without opening both.
+**Add step** groups them under these headings:
 
 | Step | What it does |
 | --- | --- |
@@ -108,31 +95,23 @@ appears` without opening both.
 | Press a key | Send a keystroke, optionally several times |
 | Wait a moment | Pause for a fixed or random length of time |
 
-Steps can be grouped: indent a run of steps under a check with Ctrl+Right, and
-they only run when that check finds what it is looking for. Split a sequence
-into sections, one per screen, and each repeats until its first step stops
-matching. Both are covered in [building sequences](docs/sequences.md).
+Indent steps under a check with Ctrl+Right and they only run when that check
+finds something. Split a sequence into sections, one per screen, and each
+repeats until its first step stops matching. See
+[building sequences](docs/sequences.md).
 
 ## Running it
 
-F9 starts the run and stops it again. It works while the application you are
-automating has focus, so you never have to go and find Pixie's window.
+F9 starts and stops the run, from any window.
 
-To stop, any of these, all of which work from another application:
-
-* F9 again
-* The Stop button
-* F8
-* Put the mouse in the top left corner of the screen
-
-All of them are checked between every step and during every wait, so it stops
+To stop: F9, F8, the Stop button, or put the mouse in the top left corner of the
+screen. All are checked between every step and during every wait, so it stops
 within about 50ms. Both keys are configurable in Settings.
 
-Pixie minimizes herself when you press Start, so she is not sitting on top of
-the thing she is clicking. The taskbar title counts the cycles. Untick
-`Minimize while running` if you would rather watch.
+Pixie minimizes on Start and counts cycles in the taskbar title. Untick
+`Minimize while running` to watch instead.
 
-For an unattended run, from a shortcut or a scheduled task:
+Unattended, from a shortcut or a scheduled task:
 
 ```
 python -m pixie sequences/my_job.json
@@ -140,41 +119,39 @@ python -m pixie sequences/my_job.json --dry-run
 python -m pixie sequences/my_job.json --max-cycles 20
 ```
 
-Leaving it going for hours is fine. Memory stays flat, and Pixie has no network
-code: she reads your screen and writes to `images/` and `sequences/` beside
-herself. The log lives in the window and nowhere else, keeping the most recent
-few thousand lines, so redirect the command line form if you want to keep one.
+Memory stays flat over long runs. Pixie has no network code; it reads the screen
+and writes to `images/` and `sequences/`. The log lives in the window only and
+keeps the most recent few thousand lines, so redirect the command line form to
+keep one.
 
 ## Going further
 
 * **[Building sequences](docs/sequences.md)**: sections, branching, guarding a
-  group of steps behind a check, jumping about, timing, the cursor, and keys.
+  group of steps behind a check, jumping about, timing, the cursor, keys.
 * **[Matching a glow or a highlight](docs/matching.md)**: getting a color step
-  to find the thing you mean and nothing else. Read this when a step finds the
-  wrong thing or clicks somewhere strange.
+  to find the thing you mean. Read this when a step finds the wrong thing or
+  clicks somewhere strange.
 
 ## Is this the right tool?
 
-Pixel matching works on anything you can see, which is its strength and its
-weakness. It breaks when windows move, when the resolution changes, or when a
-theme shifts.
+Pixel matching works on anything you can see. It breaks when windows move, when
+the resolution changes, or when a theme shifts.
 
-If your target is a normal Windows application or a web app, look at pywinauto
-or Playwright first. Those find the actual button labelled OK, and none of the
-above bothers them.
+For a normal Windows application or a web app, try pywinauto or Playwright
+first: they find the actual button labelled OK, and none of the above affects
+them.
 
-Pixel matching is the right choice when there is nothing to read but the
-picture, which covers anything that draws its own interface: games, Unity and
-SDL applications, custom renderers.
+Pixel matching is for anything that draws its own interface, where there is
+nothing to read but the picture: games, Unity and SDL applications, custom
+renderers.
 
 ```
 python tools/check_target.py
 ```
 
-That prints the window class of whatever is in the foreground, which tells you
-which case you are in. It also catches exclusive fullscreen, which screen
-capture reads as a black frame; the fix is usually a setting in the
-application, switching it to borderless windowed.
+Prints the window class of whatever is in the foreground, so you know which case
+you are in. Also catches exclusive fullscreen, which screen capture reads as a
+black frame; switch the application to borderless windowed.
 
 ## Tools
 
@@ -185,7 +162,7 @@ python tools/tidy_images.py    # list captured pictures no sequence uses
 python tools/build_exe.py      # build Pixie.exe
 ```
 
-`tidy_images.py` lists and deletes nothing unless you add `--apply`.
+`tidy_images.py` deletes nothing without `--apply`.
 
 ## Development
 
@@ -195,8 +172,8 @@ python tests/selftest.py       # detection, color matching, sections, real input
 python tests/selftest_gui.py   # every step editor, reordering, save and reload
 ```
 
-`check_wiring.py` is what CI runs, because it needs no desktop. The other two
-capture the real screen and send real input, so they need a logged-in session.
+`check_wiring.py` is what CI runs; it needs no desktop. The other two capture the
+real screen and send real input, so they need a logged-in session.
 
 ```
 pixie/
@@ -217,11 +194,9 @@ pixie/
 
 Nothing in `core` or `system` imports from `ui`, so the engine runs headless.
 
-Adding a step type means one entry in `STEP_TYPES` in `pixie/core/steps.py` and
-one `_do_<key>` method on `Engine`. The GUI builds its editor from the field
-declarations, so it needs no changes.
+A new step type is one entry in `STEP_TYPES` in `pixie/core/steps.py` and one
+`_do_<key>` method on `Engine`. The GUI builds its editor from the field
+declarations.
 
-Anything named in two places eventually disagrees with itself. Step types,
-field defaults, dropdown labels, key names, pick orders and the rest each have
-exactly one home, and `check_wiring.py` fails the build if a second copy drifts
-away from it. Declare it once and let that check prove the other places agree.
+Step types, field defaults, dropdown labels, key names and pick orders each have
+one home, and `check_wiring.py` fails the build if a second copy drifts from it.
