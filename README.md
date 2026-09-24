@@ -215,6 +215,7 @@ image if it appears` without opening both.
 | Section divider | Marks the start of a section |
 | Note | Does nothing. Somewhere to explain the sequence to yourself |
 | Go somewhere else | Sends the run to another section or back to the top |
+| When nothing has happened | Fires when this section has gone round achieving nothing |
 | **Wait until something appears** | |
 | Wait for an image | Pause until a picture appears. Does not click |
 | Wait for a color | Pause until a color appears at one spot |
@@ -346,6 +347,30 @@ waited for is itself what stops the other steps from finding anything. A
 targeting prompt does exactly that: while it is up, no card in hand is
 playable, so a card check placed above it restarts the section forever and the
 step that would clear the prompt is never reached.
+
+### When nothing is on screen to check
+
+Every other check asks what is on screen. Some states do not announce
+themselves in pixels at all: a hand with nothing playable in it looks exactly
+like a hand you have not got to yet. What tells them apart is that nothing is
+being *achieved* - the section goes round and round clicking nothing - and
+that is a fact about the run, not about the screen.
+
+`When nothing has happened` finds nothing until its section has gone round
+that many times without a single click or keystroke, then finds something
+once and starts counting again:
+
+```
+ 12. Select a playable card   If it is not found: skip the steps indented under it
+     ...
+ 14. When nothing has happened    After 3 idle times round
+     ↳ 15. Press Enter
+```
+
+A lap that clicked something is not idle, so a loop that is working never
+reaches it. Put it at the *end* of the section, after everything that might
+achieve something has had its go - otherwise a lap counts as idle before the
+steps that would have made it productive have run.
 
 ### When you need "if this IS found"
 

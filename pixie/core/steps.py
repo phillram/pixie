@@ -412,6 +412,31 @@ STEP_TYPES: dict[str, StepType] = {
         describe=lambda s: "# " + (str(s.get("text") or "").strip().splitlines()
                                    or ["(empty note)"])[0][:70],
     ),
+    "when_idle": StepType(
+        key="when_idle",
+        label="When nothing has happened",
+        blurb="Finds nothing, until this section has gone round several times "
+              "without a single click or keystroke. Then it finds something, "
+              "once, and starts counting again.\n\n"
+              "Every other check asks what is on screen. This one asks whether "
+              "anything is being achieved, which is the question behind "
+              "'nothing is playable, so pass the turn'. Indent the steps to "
+              "take in that case underneath it.\n\n"
+              "A section that clicks something has not been idle, so a loop "
+              "that is working never reaches this.",
+        fields=(
+            Field("laps", "integer", "Times round with nothing happening", 3,
+                  minimum=1, maximum=100,
+                  hint="How many times this section may go round achieving "
+                       "nothing before this counts as stuck. Too low and it "
+                       "fires during an ordinary pause in play; 3 to 5 is a "
+                       "good range for a loop that usually does something "
+                       "every time round."),
+            Field("on_timeout", "choice", "While things are happening",
+                  "skip_block", choices=ON_TIMEOUT),
+        ),
+        describe=lambda s: (f"After {s.get('laps', 3)} idle times round"),
+    ),
     "jump": StepType(
         key="jump",
         label="Go somewhere else",
@@ -665,7 +690,7 @@ STEP_TYPES = {
 # enforces both, so a new type cannot be declared above and then quietly go
 # missing from the only menu that can create it.
 STEP_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("Structure", ("section", "note", "jump")),
+    ("Structure", ("section", "note", "jump", "when_idle")),
     ("Wait until something appears",
      ("wait_for_image", "wait_for_color", "wait_for_color_in_area")),
     ("Click what Pixie finds",
@@ -679,6 +704,7 @@ MENU_HINTS: dict[str, str] = {
     "section": "start a new section",
     "note": "a reminder to yourself, never run",
     "jump": "send the run somewhere else",
+    "when_idle": "fires when this section achieves nothing",
     "wait_for_image": "hold here until a picture shows up",
     "wait_for_color": "hold here until one spot turns a color",
     "wait_for_color_in_area": "find a glow and remember where it is",

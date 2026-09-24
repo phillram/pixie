@@ -315,6 +315,10 @@ class Engine:
         # back far smaller than the rest can be called out. Keyed by the step
         # object itself, and only meaningful within a single run.
         self._match_sizes: dict[int, list[int]] = {}
+        # How many times running the current section has gone round without
+        # a single click or keystroke. A loop that is working resets this
+        # every lap; one that has run out of things to do does not.
+        self.idle_laps = 0
         # Whether the step that just ran actually did something to the
         # application, rather than only looking at it. Parking and pausing
         # both exist to deal with the aftermath of an action, and a step that
@@ -881,6 +885,23 @@ class Engine:
     def _do_note(self, _step: dict[str, Any]) -> str:
         return "ok"
 
+    def _do_when_idle(self, step: dict[str, Any]) -> str:
+        """Find something only once this section has achieved nothing for a while.
+
+        Every other check asks what is on screen. This one asks whether
+        anything is being achieved, which is the question behind "nothing is
+        playable, so pass the turn" - a state no pixel on screen announces.
+        """
+        laps = max(1, int(self._value(step, "laps", 3) or 3))
+        if self.idle_laps < laps:
+            self.log(f"    {self.idle_laps} of {laps} times round with nothing "
+                     "happening, so not yet")
+            return "timeout"
+        self.log(f"    {self.idle_laps} times round with nothing happening",
+                 "warn")
+        self.idle_laps = 0      # dealt with; start counting again
+        return "ok"
+
     def _do_jump(self, step: dict[str, Any]) -> str:
         """Send the run somewhere else, deliberately rather than on a failure.
 
@@ -1011,7 +1032,7 @@ class Engine:
         numbers = step_defs.display_numbers(self.sequence.steps)
         current = 0
         index = sections[0][0]
-        ran_here = 0
+        ran_here = acted_here = 0
         self._enter_section(sections[current])
         self._announce_section(sections[current])
 
@@ -1030,12 +1051,15 @@ class Engine:
                     moved = self._hand_over(sections, current, name)
                     if moved is None:
                         return "ok"
-                    current, index, ran_here = *moved, 0
+                    current, index, ran_here, acted_here = *moved, 0, 0
                     continue
                 # Fell off the end of the section: run it again from its top.
+                # A lap in which nothing was clicked or typed is an idle one,
+                # which is what a 'When nothing has happened' step counts.
+                self.idle_laps = 0 if acted_here else self.idle_laps + 1
                 self.log(f"  -- repeating section '{name}'", "muted")
                 index = start
-                ran_here = 0
+                ran_here = acted_here = 0
                 self._sleep(self._section_pause(sections[current]))
                 continue
 
@@ -1058,6 +1082,7 @@ class Engine:
                 # them click, skipping the other five saves more time than
                 # every timeout in the loop put together.
                 acted, self.acted = self.acted, False
+                acted_here = acted_here or acted
                 if acted:
                     self._park_mouse()
                 if acted or step.get("pause"):
@@ -1112,7 +1137,7 @@ class Engine:
                 moved = self._hand_over(sections, current, name)
                 if moved is None:
                     return "ok"
-                current, index, ran_here = *moved, 0
+                current, index, ran_here, acted_here = *moved, 0, 0
                 continue
 
             # Unreachable: the branches above cover every value in

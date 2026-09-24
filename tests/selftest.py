@@ -105,6 +105,7 @@ def main() -> int:
     failures.extend(_check_restart_section())
     failures.extend(_check_a_check_guards_its_indented_steps())
     failures.extend(_check_a_jump_sends_the_run_somewhere())
+    failures.extend(_check_a_section_that_achieves_nothing())
     failures.extend(_check_the_sequence_wide_timeout())
     failures.extend(_check_the_aim_warning_reads_as_english())
     failures.extend(_check_an_odd_sized_match_is_called_out())
@@ -386,6 +387,91 @@ def _check_a_check_guards_its_indented_steps() -> list[str]:
         step("check", on_timeout="skip_block"), step("after")]).warnings()
     if not any("nothing is indented under it" in line for line in said):
         problems.append(f"a check set to skip nothing drew no warning: {said}")
+    return problems
+
+
+def _check_a_section_that_achieves_nothing() -> list[str]:
+    """A check that fires when a section has gone round doing nothing.
+
+    Every other check asks what is on screen. Some states do not announce
+    themselves in pixels at all: a hand with nothing playable in it looks
+    exactly like a hand you have not got to yet. What tells them apart is
+    that nothing is being achieved - the loop goes round and round clicking
+    nothing - and that is a fact about the run, not about the screen.
+    """
+    ran: list[str] = []
+    playable = {"yes": True}
+    laps = {"left": 6}
+
+    class Watching(engine_mod.Engine):
+        def run_step(self, step):
+            tag = step.get("tag", "")
+            if tag == "play":
+                if not playable["yes"]:
+                    return "timeout"
+                ran.append("played")
+                self._click(10, 10, step, "a card")   # this is what "acted" means
+                return "ok"
+            if tag == "pass":
+                ran.append("passed")
+                self._click(20, 20, step, "pass")
+                return "ok"
+            if tag == "limit":
+                # Ends the run after a fixed number of laps, so the test
+                # finishes whether or not the idle check ever fires.
+                laps["left"] -= 1
+                return "ok" if laps["left"] > 0 else "timeout"
+            return super().run_step(step)
+
+    def step(tag, on_timeout):
+        return {"type": "wait_for_color_in_area", "name": tag, "tag": tag,
+                "enabled": True, "on_timeout": on_timeout, "pause": [0, 0],
+                "region": [0, 0, 10, 10], "color": [1, 2, 3]}
+
+    idle = dict(step_defs.new_step("when_idle"), laps=3,
+                on_timeout="skip_block")
+    passer = dict(step("pass", "continue"), indent=1)
+    steps = [{"type": "section", "name": "Playing", "enabled": True},
+             idle, passer, step("play", "continue"),
+             step("limit", "next_section")]
+    sequence = engine_mod.Sequence(
+        name="idling", steps=steps,
+        settings=engine_mod.Settings(step_pause_min=0, step_pause_max=0,
+                                     section_pause_min=0, section_pause_max=0,
+                                     cycle_pause_min=0, cycle_pause_max=0,
+                                     failsafe_corner=False))
+
+    problems = []
+    # While cards are playable, the loop is achieving something and the idle
+    # check must never fire, however long it runs.
+    laps["left"] = 6
+    Watching(sequence, dry_run=True).run(max_cycles=1)
+    if "passed" in ran:
+        problems.append(f"passed the turn while cards were still playable: {ran}")
+    played_for = len(ran)
+
+    # With nothing playable, it fires on the lap after the third idle one.
+    playable["yes"], ran[:], laps["left"] = False, [], 6
+    Watching(sequence, dry_run=True).run(max_cycles=1)
+    if "passed" not in ran:
+        problems.append("nothing playable for six laps and it never passed")
+    print(f"Idle check      : {played_for} laps of playing -> never fired; "
+          f"6 laps of nothing -> fired {ran.count('passed')}x")
+
+    # And it fires once per run of idle laps, not on every one of them.
+    if ran.count("passed") > 2:
+        problems.append(f"fired {ran.count('passed')} times in 6 laps - it is "
+                        "not resetting its count after acting")
+
+    # The count itself: three idle laps, then it has something to report.
+    solo = Watching(engine_mod.Sequence(name="x"), dry_run=True)
+    outcomes = []
+    for lap in range(5):
+        outcomes.append(solo._do_when_idle({"type": "when_idle", "laps": 3}))
+        solo.idle_laps += 1
+    if outcomes != ["timeout", "timeout", "timeout", "ok", "timeout"]:
+        problems.append(f"the count came out {outcomes}, expected it to hold "
+                        "off for three laps, fire once, then start again")
     return problems
 
 
