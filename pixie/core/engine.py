@@ -315,6 +315,9 @@ class Engine:
         # back far smaller than the rest can be called out. Keyed by the step
         # object itself, and only meaningful within a single run.
         self._match_sizes: dict[int, list[int]] = {}
+        # Whether the section being run allows the cursor to be moved after a
+        # click. Set from its divider on the way in, like the wait cap.
+        self.park_here = True
         # How many times running the current section has gone round without
         # a single click or keystroke. A loop that is working resets this
         # every lap; one that has run out of things to do does not.
@@ -950,6 +953,8 @@ class Engine:
 
     def _park_mouse(self) -> None:
         """Move the cursor off whatever it just clicked."""
+        if not self.park_here:
+            return
         target = self._park_target()
         if target is None or self.dry_run:
             return
@@ -1005,8 +1010,10 @@ class Engine:
 
     def _enter_section(self, section: tuple[int, int, str]) -> None:
         """Pick up the settings the section's divider carries."""
-        limit = self._divider(section).get("wait_limit")
+        divider = self._divider(section)
+        limit = divider.get("wait_limit")
         self.wait_limit = float(limit) if limit else None
+        self.park_here = divider.get("park", "inherit") != "off"
 
     def _section_pause(self, section: tuple[int, int, str]) -> float:
         """This section's own pause if its divider sets one, else the default."""

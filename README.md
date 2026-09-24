@@ -845,6 +845,22 @@ dropped. A hand never lands dead still either.
 A sequence saved before this had a single point, which becomes a box one pixel
 across: it carries on landing exactly where it always did until you widen it.
 
+**A section can refuse all of it.** Set `Cursor after a click in here` on the
+divider to *leave it exactly where it is* and nothing in that section moves the
+pointer except the clicks themselves - no parking, and none of the nudge that
+follows one. The next section goes back to whatever Settings says.
+
+That is a property of the screen rather than of the job: a menu where the
+cursor passing over an entry changes what is underneath it does not want the
+pointer wandering, while the screen after it may need exactly that. The
+divider says so in the sequence list, because it changes what runs without
+appearing among the steps:
+
+```
+=== Before Game ===   (cursor held still)
+=== In Game ===
+```
+
 ## Speed
 
 Scanning the whole desktop is the slow part. Measured on a 7680x2160 dual

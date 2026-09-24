@@ -110,6 +110,7 @@ def main() -> int:
     failures.extend(_check_the_aim_warning_reads_as_english())
     failures.extend(_check_an_odd_sized_match_is_called_out())
     failures.extend(_check_parking_only_after_a_click())
+    failures.extend(_check_a_section_can_hold_the_cursor_still())
     failures.extend(_check_parking_and_gliding())
     failures.extend(_check_a_near_miss_reports_its_score())
     failures.extend(_check_max_cycles_is_a_real_limit())
@@ -611,6 +612,79 @@ def _check_an_odd_sized_match_is_called_out() -> list[str]:
         cards._odd_size(step, hit(pixels))
     if said:
         problems.append("a step whose finds legitimately vary 4x was nagged")
+    return problems
+
+
+def _check_a_section_can_hold_the_cursor_still() -> list[str]:
+    """A section can refuse to have the cursor moved after a click.
+
+    Parking keeps the pointer off the next thing Pixie needs to see, and off
+    one pixel for hours. Some screens do not want it: a menu where the cursor
+    passing over an entry changes what is underneath, or anything that reacts
+    to being hovered. That is a property of the screen, so it belongs to the
+    section, and it has to go back to normal in the next one.
+    """
+    from pixie.system import mouse as mouse_mod
+
+    moves: list[tuple[int, int]] = []
+    settings = engine_mod.Settings(
+        park_mouse="custom", park_box=[900, 500, 4, 4],
+        step_pause_min=0, step_pause_max=0, section_pause_min=0,
+        section_pause_max=0, cycle_pause_min=0, cycle_pause_max=0,
+        failsafe_corner=False)
+
+    def click(name, x):
+        return {"type": "click_point", "name": name, "enabled": True,
+                "pos": [x, 40], "clicks": 1, "button": "left", "pause": [0, 0]}
+
+    def leave(name):
+        return {"type": "wait_for_image", "name": name, "enabled": True,
+                "image": "x", "on_timeout": "next_section", "pause": [0, 0]}
+
+    still = dict(step_defs.new_step("section"), name="Still", park="off")
+    normal = dict(step_defs.new_step("section"), name="Normal")
+
+    class Watching(engine_mod.Engine):
+        def run_step(self, step):
+            if step["type"] == "wait_for_image":
+                return "timeout"          # hands the section over
+            return super().run_step(step)
+
+    original = mouse_mod.move_to
+    mouse_mod.move_to = lambda x, y: moves.append((int(x), int(y)))
+    try:
+        Watching(engine_mod.Sequence(
+            name="stillness",
+            steps=[still, click("in the still one", 100), leave("out"),
+                   normal, click("in the normal one", 200), leave("out")],
+            settings=settings)).run(max_cycles=1)
+    finally:
+        mouse_mod.move_to = original
+
+    parked = [spot for spot in moves
+              if 900 <= spot[0] < 904 and 500 <= spot[1] < 504]
+    problems = []
+    print(f"Section stillness: {len(moves)} cursor moves in all, "
+          f"{len(parked)} of them to the parking spot")
+    if not parked:
+        problems.append("the ordinary section did not park after its click")
+    # The still section's click is at x=100, the normal one's at x=200. Only
+    # the second may be followed by a journey to the parking spot.
+    order = [spot[0] for spot in moves]
+    if 100 not in order or 200 not in order:
+        problems.append(f"both clicks should have moved the cursor: {order}")
+    elif order.index(200) > min((n for n, spot in enumerate(moves)
+                                 if spot in parked), default=len(moves)):
+        problems.append("the cursor was parked before the second section, so "
+                        "the first section did not hold it still")
+
+    # And the divider says so in the list, because it changes what runs
+    # without appearing among the steps.
+    if "held still" not in step_defs.describe(still):
+        problems.append(f"a still section does not say so: "
+                        f"{step_defs.describe(still)!r}")
+    if "held still" in step_defs.describe(normal):
+        problems.append("an ordinary section claims to hold the cursor still")
     return problems
 
 

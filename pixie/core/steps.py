@@ -124,6 +124,16 @@ _ANCHOR_HINT = (
 
 # Which patch to use when several match at once. The list itself comes from
 # the matcher, so the dropdown cannot offer an order it does not implement.
+# Whether a section lets the cursor be moved after a click. Sections can
+# only turn it off, not point it somewhere else: a spot that is safe on one
+# screen is rarely safe on another, which is the whole reason for wanting it
+# off in the first place.
+SECTION_PARK = ("inherit", "off")
+SECTION_PARK_LABELS = {
+    "inherit": "as the sequence settings say",
+    "off": "leave it exactly where it is",
+}
+
 PICK_ORDERS = screen.PICK_ORDERS
 REACH_SIDES = screen.REACH_SIDES
 REACH_LABELS = {
@@ -154,6 +164,7 @@ CHOICE_LABELS: dict[str, dict[str, str]] = {
     # things - just on purpose rather than on a failure. One set of words.
     "where": {key: ON_TIMEOUT_LABELS[key] for key in JUMP_TARGETS},
     "must_reach": REACH_LABELS,
+    "park": SECTION_PARK_LABELS,
     "anchor": ANCHOR_LABELS,
 }
 # What the chosen value actually means, shown under the dropdown.
@@ -263,6 +274,17 @@ _SECTION_PAUSE_HINT = (
     "only. A section ends in one of two ways and this is waited for both: "
     "when it starts itself again, and when it hands over to the next "
     "section. Set both boxes to 0 for no wait at all."
+)
+_SECTION_PARK_HINT = (
+    "Moving the cursor away after a click keeps it from sitting over the next "
+    "thing Pixie needs to see, and stops it resting on one pixel for hours. "
+    "Some screens do not want it: a menu where the cursor passing over an "
+    "entry changes what is under it, or anything that reacts to being "
+    "hovered.\n"
+    "Set this to 'leave it exactly where it is' and nothing in this section "
+    "moves the cursor except the clicks themselves - no parking, and none of "
+    "the small nudge that follows it. The next section goes back to whatever "
+    "Settings says."
 )
 _SECTION_LIMIT_HINT = (
     "A ceiling on every wait inside this section. A step that would wait 30s, "
@@ -399,8 +421,12 @@ STEP_TYPES: dict[str, StepType] = {
                   hint=_SECTION_PAUSE_HINT),
             Field("wait_limit", "limit", "Cap every wait in here at (s)", None,
                   hint=_SECTION_LIMIT_HINT),
+            Field("park", "choice", "Cursor after a click in here", "inherit",
+                  choices=SECTION_PARK, hint=_SECTION_PARK_HINT),
         ),
-        describe=lambda s: f"=== {s.get('name') or 'Untitled section'} ===",
+        describe=lambda s: (f"=== {s.get('name') or 'Untitled section'} ==="
+                            + ("   (cursor held still)"
+                               if s.get("park") == "off" else "")),
     ),
     "note": StepType(
         key="note",
