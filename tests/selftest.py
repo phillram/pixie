@@ -107,6 +107,7 @@ def main() -> int:
     failures.extend(_check_a_jump_sends_the_run_somewhere())
     failures.extend(_check_the_sequence_wide_timeout())
     failures.extend(_check_the_aim_warning_reads_as_english())
+    failures.extend(_check_an_odd_sized_match_is_called_out())
     failures.extend(_check_parking_only_after_a_click())
     failures.extend(_check_parking_and_gliding())
     failures.extend(_check_a_near_miss_reports_its_score())
@@ -460,6 +461,70 @@ def _check_a_jump_sends_the_run_somewhere() -> list[str]:
     # the same branches rather than two copies of them.
     if not set(step_defs.JUMP_TARGETS) <= set(step_defs.ON_TIMEOUT):
         problems.append("a jump can go somewhere no 'if not found' can")
+    return problems
+
+
+def _check_an_odd_sized_match_is_called_out() -> list[str]:
+    """A match far smaller than the step's usual find is probably not it.
+
+    Every floor on a step is a number somebody guessed, and the guess only
+    goes wrong one way: too low, so noise of roughly the right color slips
+    through and gets clicked. "71 pixels" reads as a fact, not a problem -
+    until you see the same step finding 12,000 the rest of the time.
+
+    These are the real numbers from one run, where six stray finds between
+    50 and 374 pixels each fired a click on an empty battlefield.
+    """
+    said: list[str] = []
+    runner = engine_mod.Engine(
+        engine_mod.Sequence(name="sizes"),
+        emit=lambda event: said.append(str(event.get("message", "")))
+        if event.get("level") == "warn" else None)
+
+    step = dict(step_defs.new_step("wait_for_color_in_area"), min_pixels=40)
+
+    def hit(pixels):
+        return screen.ColorHit(0, 0, 0, 0, 158, 113, pixels)
+
+    problems = []
+    # The first few set the baseline and must not be second-guessed.
+    for pixels in (12877, 13232, 11855):
+        runner._odd_size(step, hit(pixels))
+    if said:
+        problems.append(f"the first few finds drew a warning: {said}")
+
+    # ...then a stray one is called out, naming what the step usually finds.
+    said.clear()
+    runner._odd_size(step, hit(71))
+    if not said:
+        problems.append("a 71-pixel find among 12,000-pixel ones said nothing")
+    elif "12,877" not in said[0]:
+        problems.append(f"the warning did not name the usual size: {said[0]!r}")
+    else:
+        print("Odd size        : " + said[0].strip()[:74])
+
+    # A normal one afterwards stays quiet, and the stray has not dragged the
+    # yardstick down with it.
+    said.clear()
+    runner._odd_size(step, hit(13990))
+    if said:
+        problems.append(f"a normal find warned: {said}")
+    said.clear()
+    runner._odd_size(step, hit(374))
+    if not said:
+        problems.append("a stray find changed the baseline, so the next one "
+                        "was accepted")
+
+    # A step that genuinely varies in size is not nagged: real cards came in
+    # between 3,566 and 13,622 pixels in the same run.
+    said.clear()
+    cards = engine_mod.Engine(engine_mod.Sequence(name="cards"),
+                              emit=lambda event: said.append("warned")
+                              if event.get("level") == "warn" else None)
+    for pixels in (3566, 4361, 9359, 13622, 3873, 5013, 4935):
+        cards._odd_size(step, hit(pixels))
+    if said:
+        problems.append("a step whose finds legitimately vary 4x was nagged")
     return problems
 
 

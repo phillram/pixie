@@ -311,6 +311,10 @@ class Engine:
         self.last_clipped = ""
         # Where the last 'Go somewhere else' step asked to go.
         self.jump_to = "next_section"
+        # How big each color step's matches usually are, so one that comes
+        # back far smaller than the rest can be called out. Keyed by the step
+        # object itself, and only meaningful within a single run.
+        self._match_sizes: dict[int, list[int]] = {}
         # Whether the step that just ran actually did something to the
         # application, rather than only looking at it. Parking and pausing
         # both exist to deal with the aftermath of an action, and a step that
@@ -590,6 +594,32 @@ class Engine:
         self.last_candidates = len(hits)
         return hits[0] if hits else None
 
+    def _odd_size(self, step: dict[str, Any], hit: Any) -> None:
+        """Say when a match is far smaller than this step usually finds.
+
+        Every floor on a step is an absolute number somebody had to guess,
+        and the guess is only wrong in one direction: too low, so noise of
+        roughly the right color slips through and gets clicked. Nothing about
+        such a match reads as wrong on its own - "71 pixels" looks like a
+        fact, not a problem.
+
+        It only looks wrong beside the other times the same step ran. So the
+        step's own history is the yardstick: no threshold to guess at, and it
+        calibrates itself to whatever is being looked for.
+        """
+        seen = self._match_sizes.setdefault(id(step), [])
+        if len(seen) >= 3:
+            usual = sorted(seen)[len(seen) // 2]
+            if usual and hit.pixels * 4 < usual:
+                floor = int(self._value(step, "min_pixels", 0) or 0)
+                self.log(f"    that is far smaller than the {usual:,} pixels "
+                         "this step usually finds, so it is probably something "
+                         "else that happens to be the right color. Raise "
+                         f"'Smallest patch' from {floor:,} towards "
+                         f"{usual // 2:,}.", "warn")
+                return      # a stray find must not drag the usual size down
+        seen.append(hit.pixels)
+
     def _edge_warning(self, hit: Any, step: dict[str, Any]) -> None:
         """Say when a patch runs off the search area, because then it lies.
 
@@ -750,6 +780,7 @@ class Engine:
                  f"{hit.width}x{hit.height} box{pieces}, center {hit.x}, {hit.y}"
                  f"{self._which_one(step)}")
         self._edge_warning(hit, step)
+        self._odd_size(step, hit)
         return "ok"
 
     def _do_wait_for_image(self, step: dict[str, Any]) -> str:

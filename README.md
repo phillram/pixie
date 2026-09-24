@@ -235,6 +235,31 @@ The grouping lives in `STEP_GROUPS` in `pixie/core/steps.py` next to the step
 types themselves, and `check_wiring.py` fails if a type is declared without a
 place in the menu - since the menu is the only way to create one.
 
+### When a find is probably not the thing
+
+Every floor on a step - `Smallest patch`, the width and height minimums - is a
+number somebody had to guess, and the guess only goes wrong in one direction:
+too low, so something of roughly the right color slips through and gets
+clicked. Nothing about such a find reads as wrong on its own. "71 pixels" looks
+like a fact, not a problem.
+
+It only looks wrong beside the other times the same step ran. So Pixie keeps
+the sizes each color step has been finding during this run, and says something
+when one comes back far smaller than the rest:
+
+```
+found RGB(185, 187, 139) - 71 pixels in a 18x8 box, center 1950, 1797
+    that is far smaller than the 12,877 pixels this step usually finds, so it
+    is probably something else that happens to be the right color. Raise
+    'Smallest patch' from 40 towards 6,438.
+```
+
+The step's own history is the yardstick, so there is no threshold to guess at
+and it calibrates itself to whatever you are looking for. A step whose finds
+legitimately vary - highlighted cards came in anywhere between 3,566 and 13,622
+pixels in one real run - is not nagged, and a stray find does not drag the
+yardstick down behind it.
+
 ### When a picture does not match
 
 "It did not appear" reads the same whether the picture was a hair under the
