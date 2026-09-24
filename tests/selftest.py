@@ -371,6 +371,30 @@ def _check_a_check_guards_its_indented_steps() -> list[str]:
     print(f"Guarded steps   : check fails -> {['check', 'after']}, "
           f"check finds -> ran all 4")
 
+    # Switching the check off takes its group with it. Running the group
+    # anyway turned actions that were only meant to happen sometimes into
+    # unconditional ones, which is the opposite of what switching a check off
+    # looks like from the list.
+    steps[0]["enabled"] = False
+    found["check"], ran[:] = True, []
+    try:
+        Watching(sequence, dry_run=True).run(max_cycles=1)
+        if ran != ["after"]:
+            problems.append(f"with the check switched off it ran {ran}, "
+                            "expected only the step after the group")
+    finally:
+        steps[0]["enabled"] = True
+    # ...while switching off one action inside the group leaves the rest.
+    steps[1]["enabled"] = False
+    found["check"], ran[:] = True, []
+    try:
+        Watching(sequence, dry_run=True).run(max_cycles=1)
+        if ran != ["check", "act two", "after"]:
+            problems.append(f"switching off one action in a group ran {ran}, "
+                            "expected the other action to survive")
+    finally:
+        steps[1]["enabled"] = True
+
     # The block is whatever is indented, so it ends where the indenting does.
     if step_defs.block_of(steps, 0) != (1, 3):
         problems.append(f"the block under the check is "

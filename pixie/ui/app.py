@@ -1929,9 +1929,17 @@ class App:
         def explain(value: str) -> str:
             return step_defs.outcome_note(value, self.sequence.steps, self.selected)
 
-        note = ttk.Label(self.editor, style="Blurb.TLabel", justify="left",
-                         wraplength=int(520 * self.scale), text=explain(current))
-        note.grid(row=row + 1, column=1, columnspan=2, sticky="w", pady=(0, 6))
+        # The same Hints box as every other explanation. Hidden, it moves to
+        # the dropdown itself, and follows the value like the label did.
+        if not self.show_hints.get():
+            hint = theme.tip(combo, explain(current),
+                             wraplength=int(380 * self.scale))
+            var.trace_add("write", lambda *_: hint.update(
+                explain(stored.get(var.get(), var.get()))))
+            return 0
+
+        note = theme.wrapping_label(self.editor, explain(current))
+        note.grid(row=row + 1, column=1, columnspan=2, sticky="ew", pady=(0, 6))
         var.trace_add("write", lambda *_: note.configure(
             text=explain(stored.get(var.get(), var.get()))))
         return 1

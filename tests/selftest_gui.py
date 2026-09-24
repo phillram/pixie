@@ -569,6 +569,10 @@ def check_choices_read_as_english():
                                        steps=[first, second, step])
     app.refresh_list(keep=0)
     app.selected = 2
+    # The note under the dropdown is an explanation like any other, so it is
+    # only drawn with Hints on. Off, it lives on the dropdown as a tooltip.
+    was_showing = bool(app.show_hints.get())
+    app.show_hints.set(True)
     app.build_editor()
     root.update()
 
@@ -613,8 +617,8 @@ def check_choices_read_as_english():
     print(f"  restart reads: {restart_note}")
 
     print("Choices ok: dropdowns read as English, files keep the short value")
+    app.show_hints.set(was_showing)
     return problems
-
 
 def check_deleting_a_step_offers_to_delete_its_image():
     """An orphaned picture is offered up; a shared one is left alone."""
@@ -1236,6 +1240,66 @@ def check_indenting_steps():
     return problems
 
 
+def check_every_explanation_obeys_the_hints_box():
+    """Hints off should mean no paragraphs, on every step type.
+
+    The note under an 'If it is not found' dropdown was drawn regardless, so a
+    panel with Hints off still carried a paragraph of explanation - and it was
+    the longest one in the editor. Anything styled as a blurb is an
+    explanation, so anything styled as a blurb has to answer to the box.
+    """
+    problems = []
+    was = bool(app.show_hints.get())
+
+    def paragraphs():
+        found = []
+
+        def walk(widget):
+            for child in widget.winfo_children():
+                try:
+                    if str(child.cget("style")) == "Blurb.TLabel":
+                        text = str(child.cget("text")).strip()
+                        # Short ones are captions beside a box - "left",
+                        # "down", the size under a preview - not explanations.
+                        if len(text) > 25:
+                            found.append(text[:60])
+                except tk.TclError:
+                    pass
+                walk(child)
+
+        walk(app.editor)
+        return found
+
+    try:
+        for kind in step_defs.STEP_TYPES:
+            app.sequence = engine_mod.Sequence(name="gating",
+                                               steps=[step_defs.new_step(kind)])
+            app.selected = 0
+
+            app.show_hints.set(False)
+            app.build_editor()
+            root.update()
+            escaped = paragraphs()
+            if escaped:
+                problems.append(f"{kind}: {len(escaped)} explanation(s) shown "
+                                f"with Hints off: {escaped}")
+
+            app.show_hints.set(True)
+            app.build_editor()
+            root.update()
+            if not paragraphs() and step_defs.STEP_TYPES[kind].blurb:
+                problems.append(f"{kind}: Hints on showed no explanation at all")
+    finally:
+        app.show_hints.set(was)
+        app.selected = -1
+        app.sequence = engine_mod.Sequence(name="selftest_gui")
+        app.refresh_list()
+
+    print(f"Hint gating ok: {len(step_defs.STEP_TYPES)} step types, no "
+          "explanation escapes the box")
+    return problems
+
+
 def check_settings_hints_can_be_hidden():
     """Settings has a paragraph per row and nine rows of numbers.
 
@@ -1640,7 +1704,8 @@ for check in (check_boxes_can_be_typed_into, check_panes_can_be_dragged,
               check_indenting_steps,
               check_moving_keeps_groups_together,
               check_no_hidden_keybinds, check_the_log_stays_a_sensible_size,
-              check_settings_hints_can_be_hidden):
+              check_settings_hints_can_be_hidden,
+              check_every_explanation_obeys_the_hints_box):
     try:
         failures.extend(check())
     except Exception as error:  # noqa: BLE001

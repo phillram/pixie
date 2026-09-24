@@ -1345,8 +1345,16 @@ class Engine:
                 continue
 
             step = self.sequence.steps[index]
-            if not step.get("enabled", True) or step.get("type") in step_defs.MARKERS:
+            if step.get("type") in step_defs.MARKERS:
                 index += 1
+                continue
+            if not step.get("enabled", True):
+                # A check that is switched off guards nothing, so its group
+                # goes with it. Running the group anyway meant switching off a
+                # check silently turned its actions into unconditional ones,
+                # which is the opposite of what switching it off looks like.
+                _first, after = step_defs.block_of(self.sequence.steps, index)
+                index = max(index + 1, after)
                 continue
 
             self._guard()
