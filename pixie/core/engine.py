@@ -247,13 +247,23 @@ class Sequence:
 
     def warnings(self) -> list[str]:
         """Things that will run but probably aren't what you meant."""
+        settings_said = []
+        # A style nothing implements falls through to warping, which is a
+        # perfectly sensible-looking run of a setting that is being ignored.
+        if self.settings.travel_style not in step_defs.TRAVEL_STYLES:
+            settings_said.append(
+                f"'Getting anywhere' is set to "
+                f"{self.settings.travel_style!r}, which is not one of "
+                f"{', '.join(step_defs.TRAVEL_STYLES)}. The cursor will "
+                "appear at each target instead of travelling.")
+
         active = [s for s in self.steps if s.get("enabled", True)]
         if not any(s.get("type") == "section" for s in active):
             # Everything below is about sections, but an indent can be wrong
             # in a sequence that has none.
-            return self._indent_warnings()
+            return settings_said + self._indent_warnings()
 
-        found = []
+        found = list(settings_said)
         if not any(s.get("on_timeout") == "next_section" for s in active):
             found.append(
                 "This sequence has sections, but no step is set to "

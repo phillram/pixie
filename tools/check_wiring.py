@@ -230,6 +230,27 @@ def _check_every_choice_is_carried_out() -> list[str]:
         except OSError:
             pass  # no desktop to ask; the lookup is what we were testing
 
+    # Travel styles. Every one has to produce a plan the others do not, or
+    # it is a word in a dropdown that changes nothing.
+    class _Journey:
+        sequence = type("S", (), {"settings": engine.Settings()})()
+
+        _travel_time = lambda _self, _x, _y: 0.3  # noqa: E731
+        _travel_plan = engine.Engine._travel_plan
+
+    plans = {}
+    for style in steps.TRAVEL_STYLES:
+        seconds, drift = _Journey()._travel_plan(style, 400, 300)
+        plans[style] = (seconds is not None, drift > 0)
+    if len(set(plans.values())) != len(steps.TRAVEL_STYLES):
+        problems.append(f"travel styles do not all behave differently: {plans}")
+    for style in steps.TRAVEL_STYLES:
+        if style not in steps.TRAVEL_STYLE_LABELS:
+            problems.append(f"travel style {style!r} has nothing to show for it")
+    if steps.TRAVEL_CHOICES != ("inherit",) + steps.TRAVEL_STYLES:
+        problems.append("a step cannot be set to every travel style the "
+                        f"sequence can: {steps.TRAVEL_CHOICES}")
+
     # Mouse buttons.
     for button in steps.BUTTONS:
         if button not in mouse._BUTTONS:
@@ -248,7 +269,8 @@ def _check_every_choice_is_carried_out() -> list[str]:
 
     print(f"  {len(screen.PICK_ORDERS)} pick orders, "
           f"{len(steps.ANCHORS)} anchors, {len(screen.REACH_SIDES)} edges, "
-          f"{len(engine.PARK_LABELS)} cursor modes, all acted on")
+          f"{len(engine.PARK_LABELS)} cursor modes, "
+          f"{len(steps.TRAVEL_STYLES)} travel styles, all acted on")
     return problems
 
 
