@@ -295,8 +295,7 @@ found' is not set to 'Skip the steps indented under it', so they run whether
 it finds anything or not.
 ```
 
-One level deep, deliberately. The file stays a flat list with one number per
-step, so reordering, sections and the save format are untouched by it.
+Groups go one level deep, not more.
 
 ### When you need "if this IS found"
 
@@ -878,27 +877,15 @@ how you confirm the coordinates are right before anything real happens.
 
 ### Leaving it running for hours
 
-**Nothing is written to disk.** The log lives in the window and nowhere else,
-so there are no files to rotate and nothing accumulating on your drive. Closing
-Pixie loses it. Copy anything you want to keep before you close, or run it from
+Safe to. Memory stays flat however long it goes.
+
+**The log lives in the window and nowhere else.** Nothing is written to disk,
+so nothing piles up on your drive, but closing Pixie loses it. It keeps the
+most recent few thousand lines and drops the rest. To keep a log, run it from
 the command line and redirect.
 
-**The log is capped at 5,000 lines** and trimmed back to 4,000 when it
-overflows, saying so where it cut. A busy loop writes about ten lines a second,
-which is the best part of a million by morning, and Tk holds every one of them
-with its tags and gets slower at appending as it goes. The newest lines are the
-ones worth having.
-
-**Memory is flat.** Measured over 8,000 engine cycles: working set steady at
-42.5MB, handles steady at 345. Over 3,200 real screen captures: GDI objects
-steady at 3, user objects at 1, working set moving less than a megabyte after
-the first batch. The one thing that did grow without limit was each step's
-record of what it usually finds, which is now a window of the last 50.
-
-**Nothing leaves the machine.** There is no network code in Pixie at all, and
-the four things it depends on - mss, OpenCV, NumPy and Pillow - are local image
-and capture libraries with nothing to phone home to. It reads your screen and
-writes to `images/` and `sequences/` beside itself.
+**Nothing leaves the machine.** Pixie has no network code. It reads your screen
+and writes to `images/` and `sequences/` beside itself.
 
 For an unattended run, from a shortcut or a scheduled task:
 
@@ -935,20 +922,10 @@ python tests/selftest.py       # detection, color matching, sections, real input
 python tests/selftest_gui.py   # every step editor, reordering, save and reload
 ```
 
-`check_wiring.py` is what CI runs, because it needs no desktop. The other two do,
-because they capture the real screen and send real input.
-
-`selftest.py` crops a patch of your actual screen and matches it back, checks hue
-matching beats RGB on a synthetic gradient, runs a three section sequence to
-confirm each one repeats until its start point fails, checks a click box lands
-inside itself and never twice in the same place, and sends real keystrokes and a
-real double click to its own window. It skips the input checks rather than firing
-stray keystrokes if its test window cannot take focus.
-
-Key identity is checked at the flags rather than by asking a window what
-arrived, because a window cannot tell the main Enter from the numpad one. Both
-report the same code. `.scratch/check_enter_key_identity.py` listens on the
-channel a game reads, for when you want to see it end to end.
+`check_wiring.py` is what CI runs, because it needs no desktop. The other two
+capture the real screen and send real input, so they need a logged-in session.
+They skip the input checks rather than firing stray keystrokes if the test
+window cannot take focus.
 
 ### Layout
 
@@ -990,34 +967,11 @@ declarations, so it needs no changes.
 
 ### One source for everything
 
-Anything named in two places eventually disagrees with itself, usually where
-nobody is looking. So each of these has exactly one home:
-
-| Thing | Lives in | What a test proves about it |
-| --- | --- | --- |
-| Step types and their fields | `STEP_TYPES` | every type has a `_do_` handler and a full set of defaults |
-| Default values for a field | the `Field` declaration | the engine reads them through `_value`, never its own copy |
-| Which editor draws a field | `App.FIELD_BUILDERS` | every declared kind has one |
-| The "if not found" options | `ON_TIMEOUT_CHOICES` | every option has a branch in `run_cycle`, found by reading the source |
-| Where a jump can send the run | `JUMP_TARGETS` | a subset of the above, with the same branches |
-| Which menu heading a step sits under | `STEP_GROUPS` | every type appears exactly once, with a hint |
-| Labels for dropdown values | `CHOICE_LABELS` | every choice on every field has one |
-| Log levels | `engine.LOG_LEVELS` | every level has a color in the GUI |
-| Which patch to pick | `screen.PICK_ORDERS` | each order sorts differently from the fallback, and steps agrees |
-| Which edge to require | `screen.REACH_SIDES` | every side is one the matcher reports reaching |
-| Where the cursor parks | `engine.PARK_LABELS` | `_park_target` branches on every mode |
-| Whether a section holds it still | `steps.SECTION_PARK` | all labelled, and `_enter_section` reads it |
-| Keys that can be a hotkey | `screen.hotkey_names()` | `key_pressed` accepts every one it offers |
-| Mouse buttons | `steps.BUTTONS` | `mouse.click` knows each one |
-| Where to aim on a match | `steps.ANCHORS` | no two aim at the same pixel |
-| Default values for a field | the `Field` declaration | the engine has no `step.get(key, literal)` restating one |
-| What a stored image path means | `paths.resolve` | `tidy_images` decides with it, rather than its own string compare |
-| What each setting is called | the `Field` declaration | `tune_color` prints those labels rather than its own |
-| Commands printed at you | the code that prints them | every script named in `pixie/` or `tools/` exists |
-| Keys Pixie can send | `keyboard.KEYS` | no two fold onto one name, all have plain English, extended flags name real keys |
-
-`check_wiring.py` does all of those except the keyboard, which needs
-`selftest.py`.
+Anything named in two places eventually disagrees with itself. Step types,
+field defaults, dropdown labels, key names, pick orders and the rest each have
+exactly one home, and `check_wiring.py` fails the build if a second copy drifts
+away from it. When you add something, declare it once and let that check prove
+the other places agree.
 
 The rule when adding anything: declare it once, and if a second place needs to
 know about it, make `check_wiring.py` prove they agree.
