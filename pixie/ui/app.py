@@ -71,6 +71,10 @@ PARK_LABELS = engine_mod.PARK_LABELS
 PARK_MODES = {label: mode for mode, label in PARK_LABELS.items()}
 
 
+_TRAVEL_STYLE_BY_LABEL = {label: style for style, label
+                          in step_defs.TRAVEL_STYLE_LABELS.items()}
+
+
 def _range_text(low: float, high: float) -> str:
     return f"{low}-{high}s" if float(high) > float(low) else f"{low}s"
 
@@ -353,16 +357,22 @@ class SettingsDialog:
                                        sticky="w", pady=(0, 10))
         row += 1
 
-        self.glide_var = tk.BooleanVar(value=settings.glide)
-        ttk.Checkbutton(frame, text="Move the cursor rather than warping it",
-                        variable=self.glide_var).grid(row=row, column=0, columnspan=2,
-                                                      sticky="w")
+        ttk.Label(frame, text="Getting anywhere").grid(
+            row=row, column=0, sticky="w", padx=(0, 14), pady=(4, 0))
+        self.glide_var = tk.StringVar(
+            value=step_defs.TRAVEL_STYLE_LABELS.get(
+                settings.travel_style, step_defs.TRAVEL_STYLE_LABELS["warp"]))
+        ttk.Combobox(frame, textvariable=self.glide_var, state="readonly",
+                     width=34,
+                     values=list(step_defs.TRAVEL_STYLE_LABELS.values())).grid(
+            row=row, column=1, sticky="w", pady=(4, 0))
         row += 1
-        ttk.Label(frame, text="Applies to the journey to a click as well as the "
-                              "one away from it, at the speed set above. A warped "
-                              "cursor is somewhere, then somewhere else, having "
-                              "crossed nothing in between; an application watching "
-                              "the pointer never sees it approach.",
+        ttk.Label(frame, text="The journey to a click and the one away from it, "
+                              "at the speed set above. A warped cursor is "
+                              "somewhere, then somewhere else, having crossed "
+                              "nothing in between, so an application watching the "
+                              "pointer never sees it approach. A straight line is "
+                              "seen, but nothing holding a mouse draws one.",
                   style="Muted.TLabel", wraplength=int(440 * scale),
                   justify="left").grid(row=row, column=0, columnspan=2,
                                        sticky="w", pady=(0, 10))
@@ -460,7 +470,8 @@ class SettingsDialog:
         self.settings.park_mouse = PARK_MODES.get(self.park_var.get(),
                                                   self.settings.park_mouse)
         self.settings.park_box = self.park_area
-        self.settings.glide = bool(self.glide_var.get())
+        self.settings.travel_style = _TRAVEL_STYLE_BY_LABEL.get(
+            self.glide_var.get(), self.settings.travel_style)
         if self.settings.park_mouse == "custom" and not self.park_area:
             messagebox.showwarning(
                 "No area picked",

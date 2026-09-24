@@ -137,6 +137,8 @@ def main() -> int:
     failures.extend(_check_repeats_are_not_metronomic())
     failures.extend(_check_every_delay_around_a_press_varies())
     failures.extend(_check_the_cursor_travels_to_a_click())
+    failures.extend(_check_the_path_can_wander())
+    failures.extend(_check_a_click_can_be_spread_over_a_box())
     failures.extend(_check_cursor_travel_scales_with_distance())
     failures.extend(_check_nothing_grows_forever_during_a_run())
     failures.extend(_check_a_bad_stop_key_does_not_kill_the_run())
@@ -2380,12 +2382,12 @@ def _check_the_cursor_travels_to_a_click() -> list[str]:
 
     try:
         sequence = engine_mod.Sequence(
-            name="travel", settings=engine_mod.Settings(glide=False,
-                                                        park_mouse="off"))
+            name="travel",
+            settings=engine_mod.Settings(travel_style="warp", park_mouse="off"))
         runner = engine_mod.Engine(sequence, dry_run=False)
         warped = clicks_from((900, 600))
 
-        sequence.settings.glide = True
+        sequence.settings.travel_style = "straight"
         glided = clicks_from((900, 600))
     finally:
         (mouse_mod.move_to, mouse_mod._send,
@@ -2405,36 +2407,160 @@ def _check_the_cursor_travels_to_a_click() -> list[str]:
         problems.append("the glide arrived in its first half, so it is not "
                         "crossing the distance")
 
-    older = engine_mod.Settings.from_dict({"park_glide": True})
-    if not older.glide:
-        problems.append("a sequence that had gliding on lost it in the rename")
+    for was in ("park_glide", "glide"):
+        older = engine_mod.Settings.from_dict({was: True})
+        if older.travel_style != "straight":
+            problems.append(f"a sequence with {was}=True came back as "
+                            f"{older.travel_style!r}, not the journey it had")
+        off = engine_mod.Settings.from_dict({was: False})
+        if off.travel_style != "warp":
+            problems.append(f"a sequence with {was}=False came back as "
+                            f"{off.travel_style!r}")
 
     # A step can override the sequence either way, and "inherit" has to mean
     # inherit, or switching the sequence-wide setting off would quietly
     # un-set every step that had been left alone.
     wanted = {
-        (False, "inherit"): "warp", (True, "inherit"): "glide",
-        (False, "glide"): "glide", (True, "glide"): "glide",
-        (False, "warp"): "warp", (True, "warp"): "warp",
+        ("warp", "inherit"): "warp", ("straight", "inherit"): "glide",
+        ("drift", "inherit"): "glide",
+        ("warp", "straight"): "glide", ("straight", "straight"): "glide",
+        ("warp", "drift"): "glide", ("drift", "drift"): "glide",
+        ("straight", "warp"): "warp", ("drift", "warp"): "warp",
+        ("warp", "warp"): "warp",
     }
     runner = engine_mod.Engine(engine_mod.Sequence(name="mix"), dry_run=False)
     real_pos = mouse_mod.position
     mouse_mod.position = lambda: (0, 0)
     try:
         for (sequence_wide, per_step), expected in wanted.items():
-            runner.sequence.settings.glide = sequence_wide
-            got = runner._travel_to({"type": "click_point",
-                                     "travel": per_step}, 900, 600)
-            actual = "warp" if got is None else "glide"
+            runner.sequence.settings.travel_style = sequence_wide
+            seconds, _drift = runner._travel_to(
+                {"type": "click_point", "travel": per_step}, 900, 600)
+            actual = "warp" if seconds is None else "glide"
             if actual != expected:
                 problems.append(
-                    f"sequence gliding {'on' if sequence_wide else 'off'} with "
-                    f"a step set to {per_step!r} gave {actual}, wanted {expected}")
+                    f"a sequence set to {sequence_wide!r} with a step set to "
+                    f"{per_step!r} gave {actual}, wanted {expected}")
     finally:
         mouse_mod.position = real_pos
 
     print(f"Travel to click : warping {len(warped)} move, gliding "
-          f"{len(glided)} moves; 6 step/sequence combinations all correct")
+          f"{len(glided)} moves; {len(wanted)} step/sequence combinations "
+          "all correct")
+    return problems
+
+
+def _check_the_path_can_wander() -> list[str]:
+    """A straight line is no more what a hand draws than a teleport is.
+
+    Every point of a glide sat exactly on the segment between where the cursor
+    was and where it was going, with the same easing every time. 'drift' bows
+    the path off that line by an amount drawn per journey, and wobbles on top,
+    while still landing on the target rather than near it.
+    """
+    import math as maths
+
+    from pixie.system import mouse as mouse_mod
+
+    problems = []
+    runner = engine_mod.Engine(engine_mod.Sequence(name="x"), dry_run=False)
+    visited: list[tuple[int, int]] = []
+    real_move, real_pos = mouse_mod.move_to, mouse_mod.position
+    mouse_mod.move_to = lambda x, y: visited.append((x, y))
+    mouse_mod.position = lambda: visited[-1] if visited else (0, 0)
+
+    start, target = (100, 100), (1400, 800)
+    span = (target[0] - start[0], target[1] - start[1])
+    length = maths.hypot(*span)
+
+    def furthest_from_the_line(style: str) -> float:
+        visited.clear()
+        visited.append(start)
+        seconds, drift = runner._travel_plan(style, *target)
+        visited.clear()
+        visited.append(start)
+        mouse_mod.glide_to(*target, seconds=0, drift=drift)
+        worst = 0.0
+        for px, py in visited[1:]:
+            off = abs(span[0] * (start[1] - py)
+                      - (start[0] - px) * span[1]) / length
+            worst = max(worst, off)
+        return worst
+
+    try:
+        straight = [furthest_from_the_line("straight") for _ in range(3)]
+        wandered = [furthest_from_the_line("drift") for _ in range(8)]
+        landed = visited[-1]
+    finally:
+        mouse_mod.move_to, mouse_mod.position = real_move, real_pos
+
+    if max(straight) > 2:
+        problems.append(f"a straight glide strayed {max(straight):.1f}px from "
+                        "the straight line, which it should not do at all")
+    if max(wandered) < 4:
+        problems.append(f"a wandering glide never got more than "
+                        f"{max(wandered):.1f}px off the line, so it is barely "
+                        "wandering")
+    if len({round(value) for value in wandered}) < 4:
+        problems.append(f"eight wandering journeys bowed by "
+                        f"{[round(v) for v in wandered]}px, too alike")
+    if landed != target:
+        problems.append(f"a wandering glide finished at {landed}, not on "
+                        f"{target}")
+
+    print(f"Path shape      : straight {max(straight):.1f}px off the line, "
+          f"wandering {min(wandered):.0f}-{max(wandered):.0f}px, landing true")
+    return problems
+
+
+def _check_a_click_can_be_spread_over_a_box() -> list[str]:
+    """A click on a fixed point hit the same pixel for as long as it ran.
+
+    The parking spot became a box for exactly this reason. 0 still means the
+    exact point, because a small target wants it.
+    """
+    from pixie.system import mouse as mouse_mod
+
+    problems = []
+    runner = engine_mod.Engine(engine_mod.Sequence(name="x"), dry_run=False)
+
+    exact = {runner._scatter({"type": "click_point"}, 800, 400)
+             for _ in range(20)}
+    if exact != {(800, 400)}:
+        problems.append(f"with no scatter asked for, clicks landed on {exact}")
+
+    spread = [runner._scatter({"type": "click_point", "scatter": 5}, 800, 400)
+              for _ in range(40)]
+    if len(set(spread)) < 10:
+        problems.append(f"a scatter of 5 gave only {len(set(spread))} distinct "
+                        "spots in 40 clicks")
+    outside = [point for point in spread
+               if abs(point[0] - 800) > 5 or abs(point[1] - 400) > 5]
+    if outside:
+        problems.append(f"a scatter of 5 landed outside its box: {outside[:3]}")
+
+    # The nudge after parking used to be one pixel to the right, every time.
+    nudges = []
+    visited: list[tuple[int, int]] = []
+    real_move, real_pos = mouse_mod.move_to, mouse_mod.position
+    mouse_mod.move_to = lambda x, y: visited.append((x, y))
+    mouse_mod.position = lambda: (500, 500)
+    try:
+        for _ in range(20):
+            visited.clear()
+            mouse_mod.settle()
+            nudges.append((visited[0][0] - 500, visited[0][1] - 500))
+            if visited[-1] != (500, 500):
+                problems.append(f"the nudge left the cursor at {visited[-1]}")
+                break
+    finally:
+        mouse_mod.move_to, mouse_mod.position = real_move, real_pos
+    if len(set(nudges)) < 4:
+        problems.append(f"twenty nudges used only {len(set(nudges))} of the "
+                        f"eight directions: {sorted(set(nudges))}")
+
+    print(f"Click scatter   : 0 -> one spot, 5 -> {len(set(spread))} spots in "
+          f"its box; {len(set(nudges))} different nudges")
     return problems
 
 

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import ctypes
 import math
+import random
 import time
 from ctypes import wintypes
 from typing import Callable
@@ -106,19 +107,26 @@ def _moment(value: float | Callable[[], float]) -> float:
 
 
 def settle() -> None:
-    """A pixel of movement in place, and back.
+    """A pixel or two of movement in place, and back.
 
     Arriving somewhere is one event, and an application that only re-checks
     what is under the pointer when the pointer moves can be left holding a
     hover state for something the cursor has already left. A hand never lands
     dead still; this is the smallest honest version of that.
+
+    The direction and the distance are drawn, because a nudge of exactly one
+    pixel to the right, every time, is its own signature.
     """
     x, y = position()
-    move_to(x + 1, y)
+    step = random.choice((-2, -1, 1, 2))
+    if random.random() < 0.5:
+        move_to(x + step, y)
+    else:
+        move_to(x, y + step)
     move_to(x, y)
 
 
-def glide_to(x: int, y: int, seconds: float = 0.25) -> None:
+def glide_to(x: int, y: int, seconds: float = 0.25, drift: float = 0.0) -> None:
     """Travel to (x, y) over `seconds` instead of appearing there.
 
     Warping the cursor is one event: the pointer is somewhere, then it is
@@ -132,23 +140,41 @@ def glide_to(x: int, y: int, seconds: float = 0.25) -> None:
     scale it by distance. Leaving that to a default here is what made a 40px
     nudge and a 7000px sweep both take a quarter of a second, the second of
     them at twenty-four thousand pixels a second.
+
+    `drift` is how far the path may bow off the straight line, in pixels. 0
+    goes straight, which is exactly what nothing holding a mouse does. The
+    bow is a half sine, so it starts and ends at nothing and the journey
+    still lands where it was asked to.
     """
     from_x, from_y = position()
     x, y = int(x), int(y)
-    distance = math.hypot(x - from_x, y - from_y)
+    span_x, span_y = x - from_x, y - from_y
+    distance = math.hypot(span_x, span_y)
     if distance < 1:
         move_to(x, y)
         return
 
     count = max(2, min(GLIDE_MAX_STEPS, int(distance // GLIDE_STEP)))
     pause = max(0.0, seconds) / count
+    # Which way the bow goes, and how far. Perpendicular to the direction of
+    # travel, so it reads as a hand curving round rather than overshooting.
+    across_x, across_y = -span_y / distance, span_x / distance
+    bow = random.uniform(-drift, drift) if drift else 0.0
+
     for step in range(1, count + 1):
         # Ease in and out: slow at the start, quickest in the middle, slow
         # into the target.
         fraction = step / count
         eased = fraction * fraction * (3 - 2 * fraction)
-        move_to(round(from_x + (x - from_x) * eased),
-                round(from_y + (y - from_y) * eased))
+        sideways = bow * math.sin(math.pi * fraction)
+        # A little noise on top, so the bow is not a clean curve either. Not
+        # on the last step, which the final move_to below lands exactly.
+        wobble_x = wobble_y = 0.0
+        if drift and step < count:
+            wobble_x = random.uniform(-1.5, 1.5)
+            wobble_y = random.uniform(-1.5, 1.5)
+        move_to(round(from_x + span_x * eased + across_x * sideways + wobble_x),
+                round(from_y + span_y * eased + across_y * sideways + wobble_y))
         if pause:
             time.sleep(pause)
     move_to(x, y)
@@ -163,13 +189,15 @@ def click(
     before: float | Callable[[], float] = 0.05,
     hold: float | Callable[[], float] = 0.02,
     travel: float | None = None,
+    drift: float = 0.0,
 ) -> None:
     """Move to (x, y) and click.
 
     `travel` is how long to take getting there. None warps, which is instant
     and generates one movement event; a number glides, passing over whatever
     lies between. An application that watches the pointer sees the approach
-    either way, but only a glide looks like an approach.
+    either way, but only a glide looks like an approach. `drift` bows that
+    approach off the straight line.
 
     Three delays, any of which may be a function so that no two clicks are
     timed alike:
@@ -190,7 +218,7 @@ def click(
         raise ValueError(f"Unknown button {button!r}. Use left, right or middle.")
 
     if travel:
-        glide_to(x, y, seconds=travel)
+        glide_to(x, y, seconds=travel, drift=drift)
     else:
         move_to(x, y)
     time.sleep(_moment(before))

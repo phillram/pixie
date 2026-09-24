@@ -35,6 +35,11 @@ MATCH_HISTORY = 50
 # divided by speed is clamped between them.
 TRAVEL_MIN_SECONDS = 0.05
 TRAVEL_MAX_SECONDS = 0.8
+# How far a wandering path may bow off the straight line: a share of the
+# distance, so a short hop stays a hop, and a ceiling so a long sweep does not
+# take a tour of the desktop.
+DRIFT_SHARE = 0.05
+DRIFT_MAX_PIXELS = 50.0
 
 # Every level `log` may be called with. The GUI colors them, and
 # tools/check_wiring.py fails if it has no color for one of these.
@@ -105,9 +110,9 @@ class Settings:
     park_box: list[int] | None = None
     # Travel there rather than appearing there. An application that tracks
     # hover never sees a warped cursor cross anything.
-    # Travel to a point rather than appearing at it, both on the way to a
-    # click and on the way to the parking spot.
-    glide: bool = False
+    # How the cursor gets anywhere, on the way to a click and on the way to
+    # the parking spot: "warp", "straight" or "drift".
+    travel_style: str = "warp"
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> "Settings":
@@ -135,11 +140,14 @@ class Settings:
             if point:
                 data["park_box"] = [int(point[0]), int(point[1]), 1, 1]
         data.pop("park_point", None)
-        # Gliding used to apply only to parking. It covers the journey to a
-        # click as well now, under a name that no longer says otherwise.
-        if "park_glide" in data and "glide" not in data:
-            data["glide"] = data.pop("park_glide")
-        data.pop("park_glide", None)
+        # Travelling was a tick box, and then a tick box under a better name.
+        # It is a style now, because moving in a straight line and wandering
+        # are different journeys. A file that had it on keeps exactly the
+        # journey it had, and can be moved to wandering by hand.
+        for was in ("glide", "park_glide"):
+            if was in data and "travel_style" not in data:
+                data["travel_style"] = "straight" if data[was] else "warp"
+            data.pop(was, None)
 
         known = {f: data[f] for f in cls.__dataclass_fields__ if f in data}
         return cls(**known)
@@ -496,6 +504,7 @@ class Engine:
                 "top": hit.top_x, "bottom": hit.bottom_x}
 
     def _click(self, x: int, y: int, step: dict[str, Any], what: str) -> None:
+        x, y = self._scatter(step, x, y)
         clicks = int(self._value(step, "clicks", 1) or 1)
         button = self._value(step, "button", "left")
         suffix = "  [dry run]" if self.dry_run else ""
@@ -505,12 +514,13 @@ class Engine:
         # only place in the engine that moves the pointer -- so the note
         # cannot drift out of step with what actually happened.
         self.acted = True
+        seconds, drift = self._travel_to(step, x, y)
         if not self.dry_run:
             mouse.click(x, y, button=button, clicks=clicks,
                         interval=self._repeat_gap(step),
                         before=self._settle_before(),
                         hold=self._press_hold(step),
-                        travel=self._travel_to(step, x, y))
+                        travel=seconds, drift=drift)
 
     # -- step handlers ---------------------------------------------------
 
@@ -1070,19 +1080,42 @@ class Engine:
         return lambda: _between(low, high)
 
     def _travel_to(self, step: dict[str, Any], to_x: int,
-                   to_y: int) -> float | None:
-        """How long to take reaching a click, or None to appear there.
+                   to_y: int) -> tuple[float | None, float]:
+        """How this step should reach a point: (seconds, drift).
 
-        The step decides, and "inherit" hands it back to the sequence. Three
-        states rather than a tick box, so that switching the sequence-wide
-        setting off does not quietly un-set every step that never asked.
+        Seconds of None means appear there. The step decides, and "inherit"
+        hands it back to the sequence, so switching the sequence-wide setting
+        does not leave every step that never asked saying something else.
         """
-        how = str(self._value(step, "travel", "inherit"))
-        if how == "warp":
-            return None
-        if how != "glide" and not self.sequence.settings.glide:
-            return None
-        return self._travel_time(to_x, to_y)
+        style = str(self._value(step, "travel", "inherit"))
+        if style == "inherit":
+            style = self.sequence.settings.travel_style
+        return self._travel_plan(style, to_x, to_y)
+
+    def _travel_plan(self, style: str, to_x: int,
+                     to_y: int) -> tuple[float | None, float]:
+        """Seconds to take and how far to wander, for one journey."""
+        if style not in ("straight", "drift"):
+            return None, 0.0
+        seconds = self._travel_time(to_x, to_y)
+        if style != "drift":
+            return seconds, 0.0
+        from_x, from_y = mouse.position()
+        distance = math.hypot(to_x - from_x, to_y - from_y)
+        return seconds, min(DRIFT_MAX_PIXELS, distance * DRIFT_SHARE)
+
+    def _scatter(self, step: dict[str, Any], x: int, y: int) -> tuple[int, int]:
+        """Spread a click over a small box instead of one pixel.
+
+        The parking spot became a box for this reason; the clicks never did,
+        so a sequence could hammer one coordinate for hours. 0 keeps the exact
+        point, which is what a small target wants.
+        """
+        spread = int(self._value(step, "scatter", 0) or 0)
+        if spread <= 0:
+            return x, y
+        return (x + random.randint(-spread, spread),
+                y + random.randint(-spread, spread))
 
     def _travel_time(self, to_x: int, to_y: int) -> float:
         """How long the cursor should take to reach a point.
@@ -1116,7 +1149,8 @@ class Engine:
 
     def _park_description(self) -> str:
         """Where the cursor goes and how, in words, for the opening log line."""
-        how = "moves" if self.sequence.settings.glide else "returns"
+        how = ("returns" if self.sequence.settings.travel_style == "warp"
+               else "moves")
         settings = self.sequence.settings
         if settings.park_mouse == "center":
             x, y = screen.primary_center()
@@ -1133,10 +1167,12 @@ class Engine:
         target = self._park_target()
         if target is None or self.dry_run:
             return
-        if self.sequence.settings.glide:
-            mouse.glide_to(*target, seconds=self._travel_time(*target))
-        else:
+        seconds, drift = self._travel_plan(
+            self.sequence.settings.travel_style, *target)
+        if seconds is None:
             mouse.move_to(*target)
+        else:
+            mouse.glide_to(*target, seconds=seconds, drift=drift)
         # Parking exists to get the cursor off whatever it was over. Landing
         # is not always enough to make an application notice it has left.
         mouse.settle()

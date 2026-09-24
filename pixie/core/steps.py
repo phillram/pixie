@@ -122,13 +122,22 @@ _ANCHOR_HINT = (
 # only turn it off, not point it somewhere else: a spot that is safe on one
 # screen is rarely safe on another, which is the whole reason for wanting it
 # off in the first place.
-# How the cursor gets to a click. "inherit" leaves it to the sequence-wide
-# setting, so a step that has never been thought about follows it.
-TRAVEL_CHOICES = ("inherit", "glide", "warp")
+# How the cursor gets anywhere. Three journeys, not two: a straight line is
+# no more what a hand does than a teleport is, it is only slower about it.
+TRAVEL_STYLES = ("warp", "straight", "drift")
+TRAVEL_STYLE_LABELS = {
+    "warp": "appear there instantly",
+    "straight": "move there in a straight line",
+    "drift": "move there, wandering off the line a little",
+}
+# What a step may say. "inherit" leaves it to the sequence-wide setting, so a
+# step nobody has thought about follows it.
+TRAVEL_CHOICES = ("inherit",) + TRAVEL_STYLES
 TRAVEL_LABELS = {
     "inherit": "as the sequence settings say",
-    "glide": "move there, then click",
     "warp": "appear there, then click",
+    "straight": "move there in a straight line, then click",
+    "drift": "wander there, then click",
 }
 
 SECTION_PARK = ("inherit", "off")
@@ -407,10 +416,18 @@ _BUTTON_FIELDS: tuple[Field, ...] = (
     Field("button", "choice", "Which mouse button", "left", choices=BUTTONS),
     Field("travel", "choice", "Getting there", "inherit",
           choices=TRAVEL_CHOICES,
-          hint="Whether the cursor travels to this click or appears at it.\n"
+          hint="How the cursor gets to this click.\n"
                "Moving lets an application see the pointer approach, which is "
-               "what opens a hover state. Appearing is instant, and worth it "
-               "on a step that runs every lap and only has to land."),
+               "what opens a hover state; wandering does the same without "
+               "travelling in a perfectly straight line. Appearing is "
+               "instant, and worth it on a step that runs every lap and only "
+               "has to land."),
+    Field("scatter", "integer", "Click within (px)", 0, minimum=0, maximum=200,
+          hint="Turns the target into a box this many pixels either side of "
+               "it, and clicks somewhere inside.\n"
+               "0 clicks the exact point every time, which is right when the "
+               "target is small. Anything above that spreads the clicks out, "
+               "the way the parking box does."),
     _CLICK_GAP_FIELD,
     _CLICK_HOLD_FIELD,
 )
