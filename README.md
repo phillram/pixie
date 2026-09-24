@@ -102,11 +102,22 @@ repeats until its first step stops matching. See
 
 ## Running it
 
-F9 starts and stops the run, from any window.
+Two keys, both set per sequence under Settings:
 
-To stop: F9, F8, the Stop button, or put the mouse in the top left corner of the
-screen. All are checked between every step and during every wait, so it stops
-within about 50ms. Both keys are configurable in Settings.
+| Setting | Default | What it does |
+| --- | --- | --- |
+| **Start/stop key** | F9 | Starts the run. Press again to stop. Can be turned off |
+| **Stop key** | F8 | Stops the run and nothing else |
+
+Both work while the application you are automating has focus, so you never have
+to go and find Pixie's window.
+
+To stop: either key, the Stop button, or put the mouse in the top left corner of
+the screen. All are checked between every step and during every wait, so it
+stops within about 50ms.
+
+The choosable keys are F1 to F12, Esc, Space, Pause and ScrollLock. Those are
+the ones Pixie can watch for while another window has focus.
 
 Pixie minimizes on Start and counts cycles in the taskbar title. Untick
 `Minimize while running` to watch instead.
