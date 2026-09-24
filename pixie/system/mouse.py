@@ -96,6 +96,23 @@ def move_to(x: int, y: int) -> None:
 GLIDE_STEP = 24
 GLIDE_MAX_STEPS = 60
 
+# How speed varies along a journey. Each takes a fraction of the way through
+# (0 to 1) and gives back a fraction of the distance covered, so every one of
+# them starts at 0 and ends at 1 and the journey lands where it was aimed.
+EASINGS = {
+    # Slow, quick, slow. Symmetric, and the least surprising.
+    "smooth": lambda f: f * f * (3 - 2 * f),
+    # The same shape with more pronounced ends.
+    "smoother": lambda f: f * f * f * (f * (f * 6 - 15) + 10),
+    # Quick away and slow in, which is what reaching for something looks like.
+    "out": lambda f: 1 - (1 - f) ** 3,
+}
+EASING_NAMES = tuple(EASINGS)
+
+# How much of a journey with an overshoot is spent going past the target. The
+# rest is the correction back onto it.
+OVERSHOOT_SHARE_OF_TIME = 0.78
+
 
 def _moment(value: float | Callable[[], float]) -> float:
     """A delay that may be a number, or a function returning a fresh one.
@@ -126,7 +143,8 @@ def settle() -> None:
     move_to(x, y)
 
 
-def glide_to(x: int, y: int, seconds: float = 0.25, drift: float = 0.0) -> None:
+def glide_to(x: int, y: int, seconds: float = 0.25, drift: float = 0.0,
+             easing: str = "smooth", overshoot: float = 0.0) -> None:
     """Travel to (x, y) over `seconds` instead of appearing there.
 
     Warping the cursor is one event: the pointer is somewhere, then it is
@@ -143,8 +161,13 @@ def glide_to(x: int, y: int, seconds: float = 0.25, drift: float = 0.0) -> None:
 
     `drift` is how far the path may bow off the straight line, in pixels. 0
     goes straight, which is exactly what nothing holding a mouse does. The
-    bow is a half sine, so it starts and ends at nothing and the journey
-    still lands where it was asked to.
+    bow is a half sine, so it starts and ends at nothing.
+
+    `easing` names a curve in EASINGS: how the speed varies along the way.
+
+    `overshoot` carries the cursor that many pixels past the target before it
+    comes back, which is what a hand reaching for something distant does. The
+    journey still finishes on the target, whatever it did on the way.
     """
     from_x, from_y = position()
     x, y = int(x), int(y)
@@ -152,6 +175,30 @@ def glide_to(x: int, y: int, seconds: float = 0.25, drift: float = 0.0) -> None:
     distance = math.hypot(span_x, span_y)
     if distance < 1:
         move_to(x, y)
+        return
+
+    curve = EASINGS.get(easing, EASINGS["smooth"])
+    if overshoot:
+        past = (round(x + span_x / distance * overshoot),
+                round(y + span_y / distance * overshoot))
+        _travel((from_x, from_y), past, seconds * OVERSHOOT_SHARE_OF_TIME,
+                drift, curve)
+        # The correction: shorter, and always slowing into the target.
+        _travel(past, (x, y), seconds * (1 - OVERSHOOT_SHARE_OF_TIME),
+                0.0, EASINGS["out"])
+    else:
+        _travel((from_x, from_y), (x, y), seconds, drift, curve)
+    move_to(x, y)
+
+
+def _travel(start: tuple[int, int], end: tuple[int, int], seconds: float,
+            drift: float, curve) -> None:
+    """One leg of a journey: the points between two places, in order."""
+    from_x, from_y = start
+    x, y = end
+    span_x, span_y = x - from_x, y - from_y
+    distance = math.hypot(span_x, span_y)
+    if distance < 1:
         return
 
     count = max(2, min(GLIDE_MAX_STEPS, int(distance // GLIDE_STEP)))
@@ -162,13 +209,11 @@ def glide_to(x: int, y: int, seconds: float = 0.25, drift: float = 0.0) -> None:
     bow = random.uniform(-drift, drift) if drift else 0.0
 
     for step in range(1, count + 1):
-        # Ease in and out: slow at the start, quickest in the middle, slow
-        # into the target.
         fraction = step / count
-        eased = fraction * fraction * (3 - 2 * fraction)
+        eased = curve(fraction)
         sideways = bow * math.sin(math.pi * fraction)
         # A little noise on top, so the bow is not a clean curve either. Not
-        # on the last step, which the final move_to below lands exactly.
+        # on the last step, which the caller lands exactly.
         wobble_x = wobble_y = 0.0
         if drift and step < count:
             wobble_x = random.uniform(-1.5, 1.5)
@@ -177,7 +222,6 @@ def glide_to(x: int, y: int, seconds: float = 0.25, drift: float = 0.0) -> None:
                 round(from_y + span_y * eased + across_y * sideways + wobble_y))
         if pause:
             time.sleep(pause)
-    move_to(x, y)
 
 
 def click(
@@ -190,6 +234,8 @@ def click(
     hold: float | Callable[[], float] = 0.02,
     travel: float | None = None,
     drift: float = 0.0,
+    easing: str = "smooth",
+    overshoot: float = 0.0,
 ) -> None:
     """Move to (x, y) and click.
 
@@ -218,7 +264,8 @@ def click(
         raise ValueError(f"Unknown button {button!r}. Use left, right or middle.")
 
     if travel:
-        glide_to(x, y, seconds=travel, drift=drift)
+        glide_to(x, y, seconds=travel, drift=drift, easing=easing,
+                 overshoot=overshoot)
     else:
         move_to(x, y)
     time.sleep(_moment(before))

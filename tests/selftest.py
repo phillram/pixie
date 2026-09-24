@@ -138,6 +138,7 @@ def main() -> int:
     failures.extend(_check_every_delay_around_a_press_varies())
     failures.extend(_check_the_cursor_travels_to_a_click())
     failures.extend(_check_the_path_can_wander())
+    failures.extend(_check_a_journey_can_take_a_different_shape_each_time())
     failures.extend(_check_a_click_can_be_spread_over_a_box())
     failures.extend(_check_cursor_travel_scales_with_distance())
     failures.extend(_check_nothing_grows_forever_during_a_run())
@@ -2304,7 +2305,7 @@ def _check_every_delay_around_a_press_varies() -> list[str]:
         step = {"type": "click_point", "clicks": 1}
         for _attempt in range(6):
             stamps.clear()
-            mouse_mod.click(0, 0, clicks=1, before=runner._settle_before(),
+            mouse_mod.click(0, 0, clicks=1, before=runner._settle_before(step),
                             hold=runner._press_hold(step))
             arrivals.append((stamps[1] - stamps[0]) * 1000)
             holds.append((stamps[2] - stamps[1]) * 1000)
@@ -2312,9 +2313,16 @@ def _check_every_delay_around_a_press_varies() -> list[str]:
         # A step's own hold beats the sequence-wide one.
         stamps.clear()
         step["hold"] = [0.30, 0.34]
-        mouse_mod.click(0, 0, clicks=1, before=runner._settle_before(),
+        mouse_mod.click(0, 0, clicks=1, before=runner._settle_before(step),
                         hold=runner._press_hold(step))
         own = (stamps[2] - stamps[1]) * 1000
+
+        # ...and its own pause before pressing.
+        stamps.clear()
+        waiting = {"type": "click_point", "settle": [0.28, 0.32]}
+        mouse_mod.click(0, 0, clicks=1, before=runner._settle_before(waiting),
+                        hold=runner._press_hold(waiting))
+        own_settle = (stamps[1] - stamps[0]) * 1000
     finally:
         mouse_mod._send, mouse_mod.move_to = real_send, real_move
 
@@ -2333,6 +2341,9 @@ def _check_every_delay_around_a_press_varies() -> list[str]:
                             f"outside {low * 1000:.0f}-{high * 1000:.0f}ms")
     if not 290 <= own <= 365:
         problems.append(f"a step asking to hold 300-340ms held {own:.0f}ms")
+    if not 270 <= own_settle <= 345:
+        problems.append(f"a step asking to wait 280-320ms before pressing "
+                        f"waited {own_settle:.0f}ms")
 
     # Keys use the same range, so a tap is held like a button.
     taps: list[float] = []
@@ -2422,11 +2433,13 @@ def _check_the_cursor_travels_to_a_click() -> list[str]:
     # un-set every step that had been left alone.
     wanted = {
         ("warp", "inherit"): "warp", ("straight", "inherit"): "glide",
-        ("drift", "inherit"): "glide",
+        ("drift", "inherit"): "glide", ("overshoot", "inherit"): "glide",
+        ("random", "inherit"): "glide",
         ("warp", "straight"): "glide", ("straight", "straight"): "glide",
         ("warp", "drift"): "glide", ("drift", "drift"): "glide",
+        ("warp", "overshoot"): "glide", ("warp", "random"): "glide",
         ("straight", "warp"): "warp", ("drift", "warp"): "warp",
-        ("warp", "warp"): "warp",
+        ("random", "warp"): "warp", ("warp", "warp"): "warp",
     }
     runner = engine_mod.Engine(engine_mod.Sequence(name="mix"), dry_run=False)
     real_pos = mouse_mod.position
@@ -2434,9 +2447,9 @@ def _check_the_cursor_travels_to_a_click() -> list[str]:
     try:
         for (sequence_wide, per_step), expected in wanted.items():
             runner.sequence.settings.travel_style = sequence_wide
-            seconds, _drift = runner._travel_to(
+            journey = runner._travel_to(
                 {"type": "click_point", "travel": per_step}, 900, 600)
-            actual = "warp" if seconds is None else "glide"
+            actual = "warp" if journey.seconds is None else "glide"
             if actual != expected:
                 problems.append(
                     f"a sequence set to {sequence_wide!r} with a step set to "
@@ -2476,10 +2489,11 @@ def _check_the_path_can_wander() -> list[str]:
     def furthest_from_the_line(style: str) -> float:
         visited.clear()
         visited.append(start)
-        seconds, drift = runner._travel_plan(style, *target)
+        plan = runner._travel_plan(style, *target)
         visited.clear()
         visited.append(start)
-        mouse_mod.glide_to(*target, seconds=0, drift=drift)
+        mouse_mod.glide_to(*target, seconds=0, drift=plan.drift,
+                           easing=plan.easing, overshoot=plan.overshoot)
         worst = 0.0
         for px, py in visited[1:]:
             off = abs(span[0] * (start[1] - py)
@@ -2510,6 +2524,106 @@ def _check_the_path_can_wander() -> list[str]:
 
     print(f"Path shape      : straight {max(straight):.1f}px off the line, "
           f"wandering {min(wandered):.0f}-{max(wandered):.0f}px, landing true")
+    return problems
+
+
+def _check_a_journey_can_take_a_different_shape_each_time() -> list[str]:
+    """Overshoot, the easing curves, and drawing one of each per journey.
+
+    A straight line with the same easing every time is a pattern of its own,
+    however smooth it looks. These give a journey a shape: how far it strays,
+    whether it carries past the target before settling back, and how the speed
+    is spread along the way. Whatever it does on the way, it has to finish on
+    the target and not near it.
+    """
+    import math as maths
+
+    from pixie.system import mouse as mouse_mod
+
+    problems = []
+    runner = engine_mod.Engine(engine_mod.Sequence(name="x"), dry_run=False)
+    visited: list[tuple[int, int]] = []
+    real_move, real_pos = mouse_mod.move_to, mouse_mod.position
+    mouse_mod.move_to = lambda x, y: visited.append((x, y))
+    mouse_mod.position = lambda: visited[-1] if visited else (0, 0)
+
+    start, target = (100, 100), (1400, 800)
+    span = (target[0] - start[0], target[1] - start[1])
+    length = maths.hypot(*span)
+
+    def walk(style: str):
+        visited.clear()
+        visited.append(start)
+        plan = runner._travel_plan(style, *target)
+        visited.clear()
+        visited.append(start)
+        if plan.seconds is None:
+            return plan, 0.0, 0.0
+        mouse_mod.glide_to(*target, seconds=0, drift=plan.drift,
+                           easing=plan.easing, overshoot=plan.overshoot)
+        past = 0.0
+        for px, py in visited[1:]:
+            along = ((px - start[0]) * span[0]
+                     + (py - start[1]) * span[1]) / length ** 2
+            past = max(past, (along - 1.0) * length)
+        return plan, max(0.0, past), 0.0
+
+    try:
+        _plan, straight_past, _ = walk("straight")
+        _plan, over_past, _ = walk("overshoot")
+
+        # Every style has to land exactly, whatever it did on the way.
+        misses = []
+        for style in step_defs.TRAVEL_STYLES:
+            for _attempt in range(10):
+                plan, _past, _ = walk(style)
+                if plan.seconds is not None and visited[-1] != target:
+                    misses.append((style, visited[-1]))
+
+        # "random" has to be capable of every shape and every curve.
+        shapes, curves = set(), set()
+        for _attempt in range(60):
+            # _travel_plan sizes the bow and the overshoot from how far it has
+            # to go, so the cursor has to be back at the start before asking
+            # or every journey comes out as a straight line of no length.
+            visited.clear()
+            visited.append(start)
+            plan = runner._travel_plan("random", *target)
+            shapes.add("overshoot" if plan.overshoot
+                       else "drift" if plan.drift else "straight")
+            curves.add(plan.easing)
+    finally:
+        mouse_mod.move_to, mouse_mod.position = real_move, real_pos
+
+    if straight_past > 2:
+        problems.append(f"a straight journey carried {straight_past:.0f}px past "
+                        "the target, which is the overshoot style's job")
+    if over_past < 10:
+        problems.append(f"an overshooting journey only got {over_past:.0f}px "
+                        "past the target")
+    if misses:
+        problems.append(f"journeys that did not land on the target: {misses[:3]}")
+    if shapes != set(step_defs.MOVING_STYLES):
+        problems.append(f"'random' produced {sorted(shapes)} over sixty "
+                        f"journeys, not all of {sorted(step_defs.MOVING_STYLES)}")
+    if curves != set(mouse_mod.EASING_NAMES):
+        problems.append(f"'random' used {sorted(curves)}, not all of "
+                        f"{sorted(mouse_mod.EASING_NAMES)}")
+    # Each curve has to actually be a different curve.
+    at_half = {name: round(curve(0.5), 4)
+               for name, curve in mouse_mod.EASINGS.items()}
+    for name, curve in mouse_mod.EASINGS.items():
+        if abs(curve(0.0)) > 1e-9 or abs(curve(1.0) - 1.0) > 1e-9:
+            problems.append(f"easing {name!r} does not run from 0 to 1, so a "
+                            "journey using it would not start or end in the "
+                            "right place")
+    if len(set(at_half.values())) < 2:
+        problems.append(f"the easing curves are all the same shape: {at_half}")
+
+    print(f"Journey shapes  : overshoot {over_past:.0f}px past and back; "
+          f"random drew {len(shapes)} shapes and {len(curves)} curves; "
+          f"{len(step_defs.TRAVEL_STYLES) * 10 - len(misses)}/"
+          f"{len(step_defs.TRAVEL_STYLES) * 10} landed true")
     return problems
 
 

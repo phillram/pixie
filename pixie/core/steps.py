@@ -124,11 +124,15 @@ _ANCHOR_HINT = (
 # off in the first place.
 # How the cursor gets anywhere. Three journeys, not two: a straight line is
 # no more what a hand does than a teleport is, it is only slower about it.
-TRAVEL_STYLES = ("warp", "straight", "drift")
+TRAVEL_STYLES = ("warp", "straight", "drift", "overshoot", "random")
+# The ones that are an actual journey, which is what "random" picks between.
+MOVING_STYLES = ("straight", "drift", "overshoot")
 TRAVEL_STYLE_LABELS = {
     "warp": "appear there instantly",
     "straight": "move there in a straight line",
     "drift": "move there, wandering off the line a little",
+    "overshoot": "move past it and come back",
+    "random": "a different journey every time",
 }
 # What a step may say. "inherit" leaves it to the sequence-wide setting, so a
 # step nobody has thought about follows it.
@@ -138,6 +142,8 @@ TRAVEL_LABELS = {
     "warp": "appear there, then click",
     "straight": "move there in a straight line, then click",
     "drift": "wander there, then click",
+    "overshoot": "move past it, come back, then click",
+    "random": "a different journey every time, then click",
 }
 
 SECTION_PARK = ("inherit", "off")
@@ -418,10 +424,18 @@ _BUTTON_FIELDS: tuple[Field, ...] = (
           choices=TRAVEL_CHOICES,
           hint="How the cursor gets to this click.\n"
                "Moving lets an application see the pointer approach, which is "
-               "what opens a hover state; wandering does the same without "
-               "travelling in a perfectly straight line. Appearing is "
-               "instant, and worth it on a step that runs every lap and only "
-               "has to land."),
+               "what opens a hover state. 'A different journey every time' "
+               "draws the shape and the speed fresh, which is the one that "
+               "does not settle into a pattern. Appearing is instant, and "
+               "worth it on a step that runs every lap and only has to "
+               "land."),
+    Field("settle", "pause", "Pause before pressing", None,
+          falls_back_to="press_settle",
+          hint="Between the cursor arriving and the button going down, for "
+               "this step only.\n"
+               "Worth raising on something that has to notice the pointer "
+               "before it will take a click: a menu entry, or anything that "
+               "only becomes live once you are over it."),
     Field("scatter", "integer", "Click within (px)", 0, minimum=0, maximum=200,
           hint="Turns the target into a box this many pixels either side of "
                "it, and clicks somewhere inside.\n"

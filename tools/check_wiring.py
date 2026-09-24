@@ -238,12 +238,23 @@ def _check_every_choice_is_carried_out() -> list[str]:
         _travel_time = lambda _self, _x, _y: 0.3  # noqa: E731
         _travel_plan = engine.Engine._travel_plan
 
-    plans = {}
-    for style in steps.TRAVEL_STYLES:
-        seconds, drift = _Journey()._travel_plan(style, 400, 300)
-        plans[style] = (seconds is not None, drift > 0)
-    if len(set(plans.values())) != len(steps.TRAVEL_STYLES):
+    def shape_of(style: str) -> tuple:
+        plan = _Journey()._travel_plan(style, 400, 300)
+        return (plan.seconds is not None, plan.drift > 0, plan.overshoot > 0)
+
+    plans = {style: shape_of(style) for style in steps.MOVING_STYLES}
+    plans["warp"] = shape_of("warp")
+    if len(set(plans.values())) != len(plans):
         problems.append(f"travel styles do not all behave differently: {plans}")
+    # "random" is the odd one: it has to be capable of being any of them.
+    drawn = {shape_of("random") for _ in range(60)}
+    if len(drawn) < len(steps.MOVING_STYLES):
+        problems.append(f"'random' only ever produced {len(drawn)} of the "
+                        f"{len(steps.MOVING_STYLES)} journeys it picks between")
+    for style in steps.MOVING_STYLES:
+        if style not in steps.TRAVEL_STYLES:
+            problems.append(f"'random' can pick {style!r}, which is not a "
+                            "style the interface offers")
     for style in steps.TRAVEL_STYLES:
         if style not in steps.TRAVEL_STYLE_LABELS:
             problems.append(f"travel style {style!r} has nothing to show for it")

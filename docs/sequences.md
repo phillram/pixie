@@ -316,30 +316,34 @@ away to the parking spot afterwards.
 | --- | --- |
 | appear there instantly | No journey. Nothing sees the pointer approach |
 | move there in a straight line | Travels, eased at both ends |
-| move there, wandering off the line a little | Travels, bowed off the straight line by an amount drawn per journey, with a wobble on top |
+| move there, wandering off the line a little | Bowed off the straight line, with a wobble on top |
+| move past it and come back | Carries past the target, then settles back onto it |
+| a different journey every time | Draws one of the three above, and one of three speed curves, per journey. The default |
 
 Travelling happens at `Cursor travel speed`. A speed rather than a duration, so
 a long move takes longer than a short one, capped at 0.8 seconds however far it
-goes. Wandering still lands exactly on the target; the bow starts and ends at
-nothing.
+goes. Whatever shape a journey takes, it finishes on the target rather than
+near it.
 
 Every clicking step has a **Getting there** of its own, for when one click
 wants different treatment from the rest:
 
-| Getting there | What happens |
-| --- | --- |
-| as the sequence settings say | Follows the style above. The default |
-| move there in a straight line, then click | Travels, whatever the sequence says |
-| wander there, then click | Travels off the straight line, whatever the sequence says |
-| appear there, then click | Arrives instantly, whatever the sequence says |
+`Getting there` offers the same styles as the sequence, plus **as the sequence
+settings say**, which is the default and what a step you have never touched
+will do.
+
+**Pause before pressing** and **Click within (px)** are per step too: the first
+for something that has to notice the pointer before it will take a click, the
+second to spread a click over a box instead of one pixel.
 
 Moving lets an application see the pointer approach, which is what opens a
 hover state. Appearing is instant, and worth it on a step that runs every lap
 and only has to land.
 
-**Click within (px)** turns the target into a box that many pixels either side
-and clicks somewhere inside it, the way the parking box does. 0 clicks the
-exact point every time, which is what a small target wants.
+**A travelling cursor drags across whatever lies between two points.** On a
+screen where hovering changes things, that can matter more than the approach
+does: set the steps whose path crosses something sensitive to appear instead,
+or park somewhere with a shorter journey.
 
 `After each step` sends the cursor somewhere harmless once a click is done, so
 it cannot sit over the next thing Pixie looks at. **Pick area...** drags a box

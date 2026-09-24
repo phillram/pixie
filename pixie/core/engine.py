@@ -40,6 +40,11 @@ TRAVEL_MAX_SECONDS = 0.8
 # take a tour of the desktop.
 DRIFT_SHARE = 0.05
 DRIFT_MAX_PIXELS = 50.0
+# How far past the target an overshooting journey carries, before it comes
+# back. A share of the distance, because overshooting a nearby thing by more
+# than it is far away reads as a twitch rather than a reach.
+OVERSHOOT_SHARE = 0.07
+OVERSHOOT_MAX_PIXELS = 40.0
 
 # Every level `log` may be called with. The GUI colors them, and
 # tools/check_wiring.py fails if it has no color for one of these.
@@ -54,6 +59,20 @@ PARK_LABELS = {
     "custom": "move it to a spot I pick",
 }
 PARK_MODES = tuple(PARK_LABELS)
+
+
+@dataclass(frozen=True)
+class Journey:
+    """How the cursor should get somewhere.
+
+    `seconds` of None means appear there and have done with it. The rest only
+    mean anything when there is a journey to shape.
+    """
+
+    seconds: float | None
+    drift: float = 0.0
+    easing: str = "smooth"
+    overshoot: float = 0.0
 
 
 class Aborted(Exception):
@@ -111,8 +130,8 @@ class Settings:
     # Travel there rather than appearing there. An application that tracks
     # hover never sees a warped cursor cross anything.
     # How the cursor gets anywhere, on the way to a click and on the way to
-    # the parking spot: "warp", "straight" or "drift".
-    travel_style: str = "warp"
+    # the parking spot. See steps.TRAVEL_STYLES.
+    travel_style: str = "random"
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> "Settings":
@@ -524,13 +543,14 @@ class Engine:
         # only place in the engine that moves the pointer -- so the note
         # cannot drift out of step with what actually happened.
         self.acted = True
-        seconds, drift = self._travel_to(step, x, y)
+        journey = self._travel_to(step, x, y)
         if not self.dry_run:
             mouse.click(x, y, button=button, clicks=clicks,
                         interval=self._repeat_gap(step),
-                        before=self._settle_before(),
+                        before=self._settle_before(step),
                         hold=self._press_hold(step),
-                        travel=seconds, drift=drift)
+                        travel=journey.seconds, drift=journey.drift,
+                        easing=journey.easing, overshoot=journey.overshoot)
 
     # -- step handlers ---------------------------------------------------
 
@@ -1083,36 +1103,54 @@ class Engine:
             low, high = settings.press_hold_min, settings.press_hold_max
         return lambda: _between(low, high)
 
-    def _settle_before(self) -> Callable[[], float]:
+    def _settle_before(self, step: dict[str, Any]) -> Callable[[], float]:
         """How long to wait after arriving somewhere before pressing."""
-        settings = self.sequence.settings
-        low, high = settings.press_settle_min, settings.press_settle_max
+        own = step.get("settle")
+        if own:
+            low, high = float(own[0]), float(own[1])
+        else:
+            settings = self.sequence.settings
+            low, high = settings.press_settle_min, settings.press_settle_max
         return lambda: _between(low, high)
 
-    def _travel_to(self, step: dict[str, Any], to_x: int,
-                   to_y: int) -> tuple[float | None, float]:
-        """How this step should reach a point: (seconds, drift).
+    def _travel_to(self, step: dict[str, Any], to_x: int, to_y: int) -> Journey:
+        """How this step should reach a point.
 
-        Seconds of None means appear there. The step decides, and "inherit"
-        hands it back to the sequence, so switching the sequence-wide setting
-        does not leave every step that never asked saying something else.
+        The step decides, and "inherit" hands it back to the sequence, so
+        switching the sequence-wide setting does not leave every step that
+        never asked saying something else.
         """
         style = str(self._value(step, "travel", "inherit"))
         if style == "inherit":
             style = self.sequence.settings.travel_style
         return self._travel_plan(style, to_x, to_y)
 
-    def _travel_plan(self, style: str, to_x: int,
-                     to_y: int) -> tuple[float | None, float]:
-        """Seconds to take and how far to wander, for one journey."""
-        if style not in ("straight", "drift"):
-            return None, 0.0
+    def _travel_plan(self, style: str, to_x: int, to_y: int) -> Journey:
+        """Work out one journey: how long, what shape, how it speeds up.
+
+        "random" draws the shape and the curve fresh each time, which is the
+        only one of these that does not settle into a pattern of its own. The
+        named styles are there for when a particular screen wants one.
+        """
+        drawn = style == "random"
+        if drawn:
+            style = random.choice(step_defs.MOVING_STYLES)
+        if style not in step_defs.MOVING_STYLES:
+            return Journey(None)
+
         seconds = self._travel_time(to_x, to_y)
-        if style != "drift":
-            return seconds, 0.0
         from_x, from_y = mouse.position()
         distance = math.hypot(to_x - from_x, to_y - from_y)
-        return seconds, min(DRIFT_MAX_PIXELS, distance * DRIFT_SHARE)
+        easing = (random.choice(mouse.EASING_NAMES) if drawn
+                  else "out" if style == "overshoot" else "smooth")
+        return Journey(
+            seconds=seconds,
+            drift=(min(DRIFT_MAX_PIXELS, distance * DRIFT_SHARE)
+                   if style == "drift" else 0.0),
+            easing=easing,
+            overshoot=(min(OVERSHOOT_MAX_PIXELS, distance * OVERSHOOT_SHARE)
+                       if style == "overshoot" else 0.0),
+        )
 
     def _scatter(self, step: dict[str, Any], x: int, y: int) -> tuple[int, int]:
         """Spread a click over a small box instead of one pixel.
@@ -1177,12 +1215,13 @@ class Engine:
         target = self._park_target()
         if target is None or self.dry_run:
             return
-        seconds, drift = self._travel_plan(
-            self.sequence.settings.travel_style, *target)
-        if seconds is None:
+        journey = self._travel_plan(self.sequence.settings.travel_style, *target)
+        if journey.seconds is None:
             mouse.move_to(*target)
         else:
-            mouse.glide_to(*target, seconds=seconds, drift=drift)
+            mouse.glide_to(*target, seconds=journey.seconds,
+                           drift=journey.drift, easing=journey.easing,
+                           overshoot=journey.overshoot)
         # Parking exists to get the cursor off whatever it was over. Landing
         # is not always enough to make an application notice it has left.
         mouse.settle()
