@@ -767,6 +767,10 @@ class App:
         # Off by default: once you know what a setting does, its paragraph is
         # only something to scroll past. Hover a setting's name to get it back.
         self.show_hints = tk.BooleanVar(value=False)
+        # Also off by default. A step you have named says what it is for; what
+        # it does is a detail you want while building it and not while reading
+        # down the list looking for one step.
+        self.show_details = tk.BooleanVar(value=False)
         self.status_text = tk.StringVar(value="Idle")
         self.cycle_text = tk.StringVar(value="Cycles: 0")
 
@@ -899,8 +903,21 @@ class App:
         pane.rowconfigure(1, weight=1)
         pane.columnconfigure(0, weight=1)
 
-        ttk.Label(pane, text="Sequence", style="Title.TLabel").grid(
-            row=0, column=0, sticky="w", pady=(0, 6))
+        header = ttk.Frame(pane)
+        header.grid(row=0, column=0, sticky="ew", pady=(0, 6))
+        header.columnconfigure(0, weight=1)
+        ttk.Label(header, text="Sequence", style="Title.TLabel").grid(
+            row=0, column=0, sticky="w")
+        self.details_button = ttk.Checkbutton(
+            header, text="Details", style="Tool.TCheckbutton",
+            variable=self.show_details, command=self._details_toggled)
+        self.details_button.grid(row=0, column=1, sticky="e", padx=(0, 6))
+        theme.tip(self.details_button,
+                  "Add what each step actually does after its name: the "
+                  "picture it looks for, the key it presses, the box it "
+                  "clicks.\n\nOff, the list is just the names you gave, which "
+                  "is shorter to read. A step you never renamed shows what it "
+                  "does either way, because that is all it has.")
 
         holder = tk.Frame(pane, bg=theme.PANEL, highlightthickness=0)
         holder.grid(row=1, column=0, sticky="nsew")
@@ -1112,19 +1129,21 @@ class App:
         """The number shown against each row. Dividers and notes get none."""
         return step_defs.display_numbers(self.sequence.steps)
 
-    @staticmethod
-    def _row_label(number: int | None, step: dict[str, Any],
+    def _row_label(self, number: int | None, step: dict[str, Any],
                    inert: bool = False) -> tuple[str, str | None]:
         """How one step reads in the list, and what color it should be.
 
         If you have given a step your own name, that is what you want to read
-        first. The generated summary still follows in brackets, because it is
-        what tells you which image or key the step is actually using.
+        first. What the step actually does follows it only while 'Details' is
+        ticked, because a list of names is what you read to find a step and the
+        rest is what you read once you have found it. A step you never renamed
+        shows what it does either way: it has nothing else to show.
 
-        `inert` means the step is switched on but its check is not, so the run
-        skips it with the rest of the group. It is drawn like a switched-off
-        step, without the dash, because it is off by inheritance rather than
-        by your own choice.
+        A step that will not run is drawn gray with its number in brackets,
+        which says "set aside" without adding a character in front of the text.
+        Two ways to end up there, and they get the same treatment because the
+        outcome is the same: you switched this step off, or `inert` - it is on
+        but the check it sits under is off, so the run skips the whole group.
         """
         enabled = step.get("enabled", True)
         kind = step.get("type", "")
@@ -1139,18 +1158,23 @@ class App:
         # Every step starts out named after its type. Only show the name when
         # it says something the type label does not.
         if name and step_type is not None and name != step_type.label:
-            text = f"{name}   ({summary})" if summary else name
+            text = (f"{name}   ({summary})"
+                    if summary and self.show_details.get() else name)
         else:
             text = summary
 
-        prefix = f"{number:>2}. " if enabled else f"{number:>2}. - "
+        skipped = not enabled or inert
+        prefix = f"({number}) " if skipped else f"{number:>2}. "
         # Indented steps belong to the check above them, so they are drawn
         # inside it rather than beside it.
         if step_defs.indent_of(step):
             prefix = "     ↳ " + prefix
-        if not enabled or inert:
-            return prefix + text, theme.DISABLED
-        return prefix + text, None
+        return prefix + text, theme.DISABLED if skipped else None
+
+    def _details_toggled(self) -> None:
+        """Redraw the list with what each step does shown or hidden."""
+        self.refresh_list()
+        self.save_preferences()
 
     def _refresh_row(self, index: int) -> None:
         """Redraw a single row, leaving every other widget untouched.
@@ -2267,6 +2291,7 @@ class App:
             dry_run=bool(self.dry_run.get()),
             minimize_while_running=bool(self.hide_while_running.get()),
             show_hints=bool(self.show_hints.get()),
+            show_details=bool(self.show_details.get()),
             geometry=self._last_normal_geometry or self._current_geometry(),
             maximized=self._is_maximized(),
             **self._sash_positions(),
@@ -2374,6 +2399,9 @@ class App:
         if isinstance(state.get("show_hints"), bool):
             self.show_hints.set(state["show_hints"])
             self.build_editor()
+        if isinstance(state.get("show_details"), bool):
+            self.show_details.set(state["show_details"])
+            self.refresh_list()
 
         geometry = state.get("geometry")
         if isinstance(geometry, str) and self._geometry_is_on_screen(geometry):

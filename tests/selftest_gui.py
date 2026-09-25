@@ -198,11 +198,28 @@ def check_names_show_in_the_list():
         problems.append(f"section name missing from the list: {rows[0]!r}")
     if "Click the OK button" not in rows[1]:
         problems.append(f"step name missing from the list: {rows[1]!r}")
-    if "ok.png" not in rows[1]:
-        problems.append(f"step summary lost when a name is set: {rows[1]!r}")
-    # A step left on its default name should not repeat that name pointlessly.
+    # Details is off by default, so a named step reads as its name alone.
+    if "ok.png" in rows[1]:
+        problems.append(f"what the step does showed with Details off: {rows[1]!r}")
+    # A step left on its default name has nothing but what it does, so it shows
+    # that either way. Otherwise the row would be blank.
+    if "cancel.png" not in rows[2]:
+        problems.append(f"an unnamed step showed nothing at all: {rows[2]!r}")
     if untouched["name"] in rows[2]:
         problems.append(f"default name shown needlessly: {rows[2]!r}")
+
+    # Ticking Details adds what each step does after the name it was given.
+    app.show_details.set(True)
+    app.refresh_list(keep=0)
+    root.update()
+    detailed = app.listbox.get(1)
+    if "Click the OK button" not in detailed or "ok.png" not in detailed:
+        problems.append(f"Details did not add what the step does: {detailed!r}")
+    app.show_details.set(False)
+    app.refresh_list(keep=0)
+    root.update()
+    if "ok.png" in app.listbox.get(1):
+        problems.append("unticking Details left what the step does on screen")
 
     # And renaming must take effect immediately, without a rebuild.
     app.selected = 1
@@ -1248,6 +1265,18 @@ def check_indenting_steps():
     app.toggle_enabled()
     root.update()
     dimmed = str(app.listbox.itemcget(1, "foreground"))
+    # Both ways of not running read the same: the number in brackets. The
+    # check switched itself off, the step under it went with it.
+    def numbering(row: int) -> str:
+        return app.listbox.get(row).strip().removeprefix("↳ ").strip()
+
+    for row, why in ((0, "a switched-off check"), (1, "a step in its group")):
+        if not numbering(row).startswith("("):
+            problems.append(f"{why} did not get its number bracketed: "
+                            f"{app.listbox.get(row)!r}")
+    if numbering(2).startswith("("):
+        problems.append(f"a live step got its number bracketed: "
+                        f"{app.listbox.get(2)!r}")
     if dimmed != theme.DISABLED:
         problems.append(f"switching a check off left its group drawn "
                         f"{dimmed!r}, expected {theme.DISABLED!r}")
@@ -1630,6 +1659,7 @@ def check_preferences_persist():
         first = gui.App(first_root)
         first.dry_run.set(False)
         first.hide_while_running.set(False)
+        first.show_details.set(True)
         # Must be above the window's own minimum, or Tk clamps it and the
         # size we read back is the minimum rather than what we asked for.
         min_width, min_height = first_root.minsize()
@@ -1640,7 +1670,8 @@ def check_preferences_persist():
         first.on_close()
 
         written = json.loads(temp_state.read_text(encoding="utf-8"))
-        for key in ("dry_run", "minimize_while_running", "geometry"):
+        for key in ("dry_run", "minimize_while_running", "show_details",
+                    "geometry"):
             if key not in written:
                 problems.append(f"{key} was not written to the state file")
 
@@ -1652,6 +1683,8 @@ def check_preferences_persist():
             problems.append("dry run was not restored")
         if second.hide_while_running.get() is not False:
             problems.append("minimize setting was not restored")
+        if second.show_details.get() is not True:
+            problems.append("the Details box was not restored")
         if not geometry.startswith(want.split("+")[0]):
             problems.append(f"window size was not restored: asked for {want}, "
                             f"got {geometry}")
@@ -1671,7 +1704,8 @@ def check_preferences_persist():
                 problems.append(f"off-screen guard wrong for {geometry_text!r}")
         third.on_close()
 
-        print("Preferences ok: dry run, minimize and geometry survive a restart")
+        print("Preferences ok: dry run, minimize, Details and geometry "
+              "survive a restart")
     finally:
         gui.STATE_PATH = original_state_path
     return problems
