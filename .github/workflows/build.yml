@@ -1,8 +1,7 @@
 name: Build
 
-# Only a version tag builds. Pushes to main and pull requests do not, so the
-# private repo's Actions minutes are spent once per release, not once per
-# commit. A manual run builds without publishing anything.
+# Only a version tag builds, once per release. Pushes to main and pull
+# requests do not. A manual run builds without publishing anything.
 on:
   push:
     tags: ["v*"]
