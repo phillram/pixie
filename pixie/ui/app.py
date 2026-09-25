@@ -1113,12 +1113,18 @@ class App:
         return step_defs.display_numbers(self.sequence.steps)
 
     @staticmethod
-    def _row_label(number: int | None, step: dict[str, Any]) -> tuple[str, str | None]:
+    def _row_label(number: int | None, step: dict[str, Any],
+                   inert: bool = False) -> tuple[str, str | None]:
         """How one step reads in the list, and what color it should be.
 
         If you have given a step your own name, that is what you want to read
         first. The generated summary still follows in brackets, because it is
         what tells you which image or key the step is actually using.
+
+        `inert` means the step is switched on but its check is not, so the run
+        skips it with the rest of the group. It is drawn like a switched-off
+        step, without the dash, because it is off by inheritance rather than
+        by your own choice.
         """
         enabled = step.get("enabled", True)
         kind = step.get("type", "")
@@ -1142,7 +1148,9 @@ class App:
         # inside it rather than beside it.
         if step_defs.indent_of(step):
             prefix = "     ↳ " + prefix
-        return prefix + text, None if enabled else theme.DISABLED
+        if not enabled or inert:
+            return prefix + text, theme.DISABLED
+        return prefix + text, None
 
     def _refresh_row(self, index: int) -> None:
         """Redraw a single row, leaving every other widget untouched.
@@ -1153,8 +1161,9 @@ class App:
         """
         if not (0 <= index < self.listbox.size()):
             return
-        label, color = self._row_label(self._numbers()[index],
-                                       self.sequence.steps[index])
+        label, color = self._row_label(
+            self._numbers()[index], self.sequence.steps[index],
+            step_defs.is_inert(self.sequence.steps, index))
         was_selected = index in self.listbox.curselection()
         self.listbox.delete(index)
         self.listbox.insert(index, label)
@@ -1179,7 +1188,9 @@ class App:
         self.lit_section = None  # the rows it was painted on have gone
         numbers = self._numbers()
         for index, step in enumerate(self.sequence.steps):
-            label, color = self._row_label(numbers[index], step)
+            label, color = self._row_label(
+                numbers[index], step,
+                step_defs.is_inert(self.sequence.steps, index))
             self.listbox.insert("end", label)
             if color:
                 self.listbox.itemconfigure(index, foreground=color)

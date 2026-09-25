@@ -403,6 +403,27 @@ def _check_a_check_guards_its_indented_steps() -> list[str]:
     if step_defs.block_of(steps, 1) != (2, 2):
         problems.append("an indented step claimed a block of its own")
 
+    # The list has to say what the run does. A step under a switched-off check
+    # is skipped however its own switch is set, and until it was drawn that
+    # way the only way to find out was to run the sequence and read the log.
+    steps[0]["enabled"] = False
+    try:
+        if not step_defs.is_inert(steps, 1):
+            problems.append("a step under a switched-off check was not "
+                            "reported as inert")
+        if step_defs.is_inert(steps, 0) or step_defs.is_inert(steps, 3):
+            problems.append("a step that is not in a group was called inert")
+    finally:
+        steps[0]["enabled"] = True
+    if step_defs.is_inert(steps, 1):
+        problems.append("a step under a live check was called inert")
+    # A group under a section divider has no check above it, so nothing to
+    # inherit from: the divider is a marker, not a step that can fail.
+    loose = [{"type": "section", "name": "s", "enabled": False},
+             step("act one", indent=1)]
+    if step_defs.owner_of(loose, 1) is not None:
+        problems.append("a section divider was treated as a step's check")
+
     # An indent with nothing above it to guard it is not an indent. This is
     # what stops a deleted check leaving its actions looking conditional.
     orphan = [step("act one", indent=1), step("after")]

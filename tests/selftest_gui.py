@@ -1235,8 +1235,34 @@ def check_indenting_steps():
     if step_defs.indent_of(app.sequence.steps[0]):
         problems.append("deleting the check left its action still indented")
 
+    # 5. switching the check off has to show on the group, because the run
+    # skips the whole thing. Drawn in full color it read as still active, and
+    # the only way to find out otherwise was to run the sequence.
+    app.sequence = engine_mod.Sequence(
+        name="inert", steps=[check, dict(action, indent=1), later])
+    from pixie.ui import theme
+    app.refresh_list(keep=0)
+    root.update()
+    lit = str(app.listbox.itemcget(1, "foreground"))
+    app.selected = 0
+    app.toggle_enabled()
+    root.update()
+    dimmed = str(app.listbox.itemcget(1, "foreground"))
+    if dimmed != theme.DISABLED:
+        problems.append(f"switching a check off left its group drawn "
+                        f"{dimmed!r}, expected {theme.DISABLED!r}")
+    if lit == dimmed:
+        problems.append("a group looks the same whether its check is on or off")
+    if str(app.listbox.itemcget(2, "foreground")) == theme.DISABLED:
+        problems.append("the step after the group was dimmed too")
+    app.selected = 0
+    app.toggle_enabled()
+    root.update()
+    if str(app.listbox.itemcget(1, "foreground")) == theme.DISABLED:
+        problems.append("switching the check back on left its group dimmed")
+
     print("Indenting ok: indents under a check, refuses at the top, "
-          "un-indents when its check is deleted")
+          "un-indents when its check is deleted, dims its group when off")
     return problems
 
 

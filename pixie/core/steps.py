@@ -866,6 +866,33 @@ def indent_of(step: dict[str, Any]) -> int:
         return 0
 
 
+def owner_of(steps: list[dict[str, Any]], index: int) -> int | None:
+    """The check an indented step belongs to, or None if it stands alone.
+
+    The inverse of block_of, and the answer to "will this step run at all?" --
+    a group goes with its check, so an action under a switched-off check never
+    runs however its own switch is set.
+    """
+    if not indent_of(steps[index]):
+        return None
+    for earlier in range(index - 1, -1, -1):
+        if indent_of(steps[earlier]):
+            continue
+        return None if steps[earlier].get("type") in MARKERS else earlier
+    return None
+
+
+def is_inert(steps: list[dict[str, Any]], index: int) -> bool:
+    """Is this step switched on but unreachable, because its check is off?
+
+    Switching a check off takes its group with it, which is what the run does.
+    Without this the list showed those steps in full color and there was no
+    way to tell they were being skipped.
+    """
+    owner = owner_of(steps, index)
+    return owner is not None and not steps[owner].get("enabled", True)
+
+
 def block_of(steps: list[dict[str, Any]], index: int) -> tuple[int, int]:
     """The run of steps indented under `index`, as a half-open range.
 
