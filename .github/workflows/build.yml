@@ -1,11 +1,11 @@
 name: Build
 
+# Only a version tag builds. Pushes to main and pull requests do not, so the
+# private repo's Actions minutes are spent once per release, not once per
+# commit. A manual run builds without publishing anything.
 on:
   push:
-    branches: [main]
     tags: ["v*"]
-  pull_request:
-    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -40,13 +40,8 @@ jobs:
       - name: Build the executable
         run: python tools/build_exe.py
 
-      - name: Upload the build
-        uses: actions/upload-artifact@v4
-        with:
-          name: Pixie-exe
-          path: Pixie.exe
-          retention-days: 30
-
+      # No upload-artifact step: artifacts count against Actions storage.
+      # The exe goes to the release instead, which does not.
       - name: Publish release
         if: startsWith(github.ref, 'refs/tags/v')
         env:
