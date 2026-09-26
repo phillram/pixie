@@ -1243,14 +1243,65 @@ def check_indenting_steps():
     if "indent" in action:
         problems.append(f"outdent left {action.get('indent')!r} behind")
 
-    # 4. deleting the check must not leave the action looking guarded
-    app.selected = 1
-    app.indent()
-    app.selected = 0
-    app.remove()
-    root.update()
-    if step_defs.indent_of(app.sequence.steps[0]):
-        problems.append("deleting the check left its action still indented")
+    # 4. deleting a check has to say what becomes of its group. Left to
+    # un-indent on its own, the group starts running every lap -- the same
+    # silent promotion to unconditional that a switched-off check used to
+    # cause, and no easier to notice.
+    original_ask = gui.messagebox.askyesnocancel
+    asked = []
+    try:
+        def rebuild():
+            app.sequence = engine_mod.Sequence(
+                name="deleting", steps=[dict(check), dict(action, indent=1),
+                                        dict(later)])
+            app.refresh_list(keep=0)
+            app.selected = 0
+            root.update()
+
+        # Cancel changes nothing at all.
+        gui.messagebox.askyesnocancel = lambda *a, **k: (asked.append(a[0]), None)[1]
+        rebuild()
+        app.remove()
+        root.update()
+        if len(app.sequence.steps) != 3:
+            problems.append(f"cancelling the delete still changed the list: "
+                            f"{[s.get('name') for s in app.sequence.steps]}")
+
+        # Yes takes the group with it.
+        gui.messagebox.askyesnocancel = lambda *a, **k: True
+        rebuild()
+        app.remove()
+        root.update()
+        left = [s.get("name") for s in app.sequence.steps]
+        if left != ["Afterwards"]:
+            problems.append(f"deleting a check and its group left {left}")
+
+        # No keeps the group, switched off, so nothing runs unasked.
+        gui.messagebox.askyesnocancel = lambda *a, **k: False
+        rebuild()
+        app.remove()
+        root.update()
+        kept = app.sequence.steps
+        if [s.get("name") for s in kept] != ["Do the thing", "Afterwards"]:
+            problems.append(f"keeping the group lost a step: "
+                            f"{[s.get('name') for s in kept]}")
+        elif kept[0].get("enabled", True):
+            problems.append("a group kept without its check was left switched "
+                            "on, so it would run every lap")
+        if step_defs.indent_of(kept[0]):
+            problems.append("deleting the check left its action still indented")
+
+        # A step with nothing under it must not be interrogated about a group.
+        asked.clear()
+        gui.messagebox.askyesnocancel = lambda *a, **k: (asked.append(a[0]), True)[1]
+        app.selected = 1
+        app.remove()
+        root.update()
+        if asked:
+            problems.append(f"deleting a step that guards nothing still asked: "
+                            f"{asked}")
+    finally:
+        gui.messagebox.askyesnocancel = original_ask
 
     # 5. switching the check off has to show on the group, because the run
     # skips the whole thing. Drawn in full color it read as still active, and
@@ -1290,8 +1341,8 @@ def check_indenting_steps():
     if str(app.listbox.itemcget(1, "foreground")) == theme.DISABLED:
         problems.append("switching the check back on left its group dimmed")
 
-    print("Indenting ok: indents under a check, refuses at the top, "
-          "un-indents when its check is deleted, dims its group when off")
+    print("Indenting ok: indents under a check, refuses at the top, asks what "
+          "to do with a group when its check is deleted, dims it when off")
     return problems
 
 
@@ -1463,6 +1514,70 @@ def check_the_log_stays_a_sensible_size():
 
     print(f"Log size ok: {gui.LOG_MAX_LINES + 600} lines written, {held} held, "
           "newest kept")
+    return problems
+
+
+def check_the_list_buttons():
+    """Two rows of buttons, an on/off button that says which, and a gated line.
+
+    Six buttons abreast needed a wider pane than a laptop wants to give the
+    list, and the first thing clipped was Remove. The line under them is an
+    explanation, so it belongs behind the Hints box with the rest.
+    """
+    from tkinter import ttk
+
+    problems = []
+    rows = {}
+    for button in _descendants(app.root):
+        if not isinstance(button, ttk.Button):
+            continue
+        label = str(button.cget("text"))
+        if label in ("Add step", "Duplicate", "Remove", "↑", "↓", "→", "←",
+                     "Turn off", "Turn on"):
+            rows.setdefault(str(button.winfo_parent()), []).append(label)
+    movement = [labels for labels in rows.values() if "↑" in labels]
+    editing = [labels for labels in rows.values() if "Add step" in labels]
+    if not movement or not editing:
+        problems.append(f"could not find both button rows: {rows}")
+    elif movement is editing or movement[0] is editing[0]:
+        problems.append("the arrows still share a row with Add step")
+    elif sorted(movement[0]) != sorted(["↑", "↓", "→", "←"]):
+        problems.append(f"the arrow row holds {movement[0]}")
+
+    # The button has to say what it will do, not what the state is.
+    app.sequence = engine_mod.Sequence(
+        name="buttons", steps=[step_defs.new_step("press_key")])
+    app.refresh_list(keep=0)
+    root.update()
+    if str(app.toggle_button.cget("text")) != "Turn off":
+        problems.append(f"a live step offers "
+                        f"{app.toggle_button.cget('text')!r}, wanted 'Turn off'")
+    app.toggle_enabled()
+    root.update()
+    if str(app.toggle_button.cget("text")) != "Turn on":
+        problems.append(f"a switched-off step offers "
+                        f"{app.toggle_button.cget('text')!r}, wanted 'Turn on'")
+    app.toggle_enabled()
+    root.update()
+
+    # And the line under the list obeys the Hints box.
+    was = app.show_hints.get()
+    try:
+        app.show_hints.set(False)
+        app._sync_hints()
+        root.update()
+        if app.double_click_hint.grid_info():
+            problems.append("the double-click line showed with Hints off")
+        app.show_hints.set(True)
+        app._sync_hints()
+        root.update()
+        if not app.double_click_hint.grid_info():
+            problems.append("the double-click line did not come back")
+    finally:
+        app.show_hints.set(was)
+        app._sync_hints()
+
+    print("List buttons ok: 2 rows, on/off says which way, the line hides")
     return problems
 
 
@@ -1763,6 +1878,7 @@ for check in (check_boxes_can_be_typed_into, check_panes_can_be_dragged,
               check_settings_stick, check_add_menu_is_grouped,
               check_indenting_steps,
               check_moving_keeps_groups_together,
+              check_the_list_buttons,
               check_no_hidden_keybinds, check_the_log_stays_a_sensible_size,
               check_settings_hints_can_be_hidden,
               check_every_explanation_obeys_the_hints_box):

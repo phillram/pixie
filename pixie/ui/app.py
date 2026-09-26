@@ -932,22 +932,20 @@ class App:
         self.listbox.bind("<<ListboxSelect>>", self._on_select)
         self.listbox.bind("<Double-Button-1>", lambda _e: self.toggle_enabled())
 
-        buttons = ttk.Frame(pane)
-        buttons.grid(row=2, column=0, sticky="ew", pady=(8, 0))
-        add = ttk.Button(buttons, text="Add step", style="Tool.TButton",
-                         command=self._show_add_menu)
-        add.pack(side="left")
-        theme.tip(add, "Add a step after the selected one. Includes Section "
-                       "dividers and Notes, which do nothing when run.")
-
+        # Two rows rather than one. Six buttons abreast needed a pane wider
+        # than a laptop wants to give the list, and the first thing to get cut
+        # off was Remove.
         step_tips = {
-            "↑": "Move the selected step up.",
-            "↓": "Move the selected step down.",
+            "Add step": "Add a step after the selected one. Includes Section "
+                        "dividers and Notes, which do nothing when run.",
             "Duplicate": "Copy the selected step, settings and all, and drop the "
                          "copy underneath it. The quickest way to build several "
                          "steps that differ only by their image or their "
                          "position.\nShortcut: Ctrl+D",
-            "Remove": "Delete the selected step.",
+            "Remove": "Delete the selected step. One that guards a group asks "
+                      "what to do with the group first.",
+            "↑": "Move the selected step up.",
+            "↓": "Move the selected step down.",
             "→": "Indent the selected step under the one above it, so it only "
                  "runs when that one finds what it is looking for. Set the "
                  "step above to 'Skip the steps indented under it'.\n"
@@ -955,16 +953,37 @@ class App:
             "←": "Move the selected step back out, so it always runs.\n"
                  "Shortcut: Ctrl+Left",
         }
+        toggle_tip = ("Switch the selected step on or off. An off step is "
+                      "skipped, and so is any group indented under it.\n"
+                      "Double-clicking a step in the list does the same.")
+
+        top = ttk.Frame(pane)
+        top.grid(row=2, column=0, sticky="ew", pady=(8, 0))
+        for label, command in (("Add step", self._show_add_menu),
+                               ("Duplicate", self.duplicate),
+                               ("Remove", self.remove)):
+            button = ttk.Button(top, text=label, style="Tool.TButton",
+                                command=command, width=10)
+            button.pack(side="left", padx=(0, 6))
+            theme.tip(button, step_tips[label])
+        self.toggle_button = ttk.Button(top, text="Turn off", style="Tool.TButton",
+                                        command=self.toggle_enabled, width=10)
+        self.toggle_button.pack(side="left")
+        theme.tip(self.toggle_button, toggle_tip)
+
+        arrows = ttk.Frame(pane)
+        arrows.grid(row=3, column=0, sticky="ew", pady=(6, 0))
         for label, command in (("↑", self.move_up), ("↓", self.move_down),
-                               ("→", self.indent), ("←", self.outdent),
-                               ("Duplicate", self.duplicate), ("Remove", self.remove)):
-            button = ttk.Button(buttons, text=label, style="Tool.TButton",
-                                command=command, width=6 if len(label) == 1 else 10)
-            button.pack(side="left", padx=(6, 0))
+                               ("→", self.indent), ("←", self.outdent)):
+            button = ttk.Button(arrows, text=label, style="Tool.TButton",
+                                command=command, width=6)
+            button.pack(side="left", padx=(0, 6))
             theme.tip(button, step_tips[label])
 
-        ttk.Label(pane, text="Double-click a step to turn it on or off.",
-                  style="Muted.TLabel").grid(row=3, column=0, sticky="w", pady=(6, 0))
+        self.double_click_hint = ttk.Label(
+            pane, text="Double-click a step to turn it on or off.",
+            style="Muted.TLabel")
+        self.double_click_hint.grid(row=4, column=0, sticky="w", pady=(6, 0))
 
     def _build_editor_pane(self, parent: ttk.Frame) -> None:
         pane = ttk.Frame(parent)
@@ -1294,10 +1313,45 @@ class App:
         step = self.current_step()
         if step is None:
             return
+        first, after = step_defs.block_of(self.sequence.steps, self.selected)
+        held = after - first
+        if held and not self._settle_the_group(step, held):
+            return
         removed = self.sequence.steps.pop(self.selected)
         self.mark_dirty()
         self.refresh_list(keep=max(0, self.selected - 1))
         self._offer_to_delete_image(removed)
+
+    def _settle_the_group(self, check: dict[str, Any], held: int) -> bool:
+        """Deal with the steps indented under a check about to be deleted.
+
+        The group only ran because the check found something. Left behind, its
+        indent means nothing, so it un-indents and the actions start running
+        every single lap -- the same silent promotion to unconditional that
+        switching a check off used to cause, and just as hard to spot.
+
+        Returns False to abandon the deletion.
+        """
+        name = check.get("name") or step_defs.describe(check)
+        answer = messagebox.askyesnocancel(
+            "Delete its group as well?",
+            f"{held} step(s) are indented under '{name}'. They only run when "
+            "it finds something, so deleting it on its own would leave them "
+            "running every time round.\n\n"
+            f"Yes - delete '{name}' and the {held} step(s) under it.\n"
+            f"No - delete only '{name}', and switch the {held} step(s) off so "
+            "nothing runs until you say so.\n"
+            "Cancel - change nothing.",
+            default="yes")
+        if answer is None:
+            return False
+        if answer:
+            del self.sequence.steps[self.selected + 1:self.selected + 1 + held]
+            return True
+        for step in self.sequence.steps[self.selected + 1:
+                                       self.selected + 1 + held]:
+            step["enabled"] = False
+        return True
 
     def _offer_to_delete_image(self, removed: dict[str, Any]) -> None:
         """A deleted step's picture is dead weight, but only if nothing else
@@ -1472,7 +1526,20 @@ class App:
     def _hints_toggled(self) -> None:
         """Redraw the panel with the paragraphs shown or hidden, and remember."""
         self.build_editor()
+        self._sync_hints()
         self.save_preferences()
+
+    def _sync_hints(self) -> None:
+        """Show or hide the explanations that live outside the editor panel.
+
+        The line under the list is an explanation like any other, so it obeys
+        the same box. Kept separate from _hints_toggled because restoring a
+        saved preference must not write the file back out again.
+        """
+        if self.show_hints.get():
+            self.double_click_hint.grid()
+        else:
+            self.double_click_hint.grid_remove()
 
     def build_editor(self) -> None:
         for child in self.editor.winfo_children():
@@ -1484,6 +1551,10 @@ class App:
         self.canvas.yview_moveto(0)
 
         step = self.current_step()
+        self.toggle_button.configure(
+            text="Turn on" if step is not None
+            and not step.get("enabled", True) else "Turn off",
+            state="disabled" if step is None else "normal")
         if step is None:
             self.editor_title.configure(text="Step settings")
             self.test_button.configure(state="disabled")
@@ -2399,6 +2470,7 @@ class App:
         if isinstance(state.get("show_hints"), bool):
             self.show_hints.set(state["show_hints"])
             self.build_editor()
+        self._sync_hints()
         if isinstance(state.get("show_details"), bool):
             self.show_details.set(state["show_details"])
             self.refresh_list()
