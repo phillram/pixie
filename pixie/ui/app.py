@@ -1288,26 +1288,43 @@ class App:
         self.log(f"Added {step_defs.location(self.sequence.steps, at)}", "muted")
 
     def duplicate(self) -> None:
-        """Copy the selected step and select the copy, ready to be changed."""
+        """Copy the selected step and select the copy, ready to be changed.
+
+        A check comes with its group. Copying the check on its own dropped the
+        copy between it and the steps it guarded, which handed the group to the
+        copy and left the original guarding nothing -- and the list looked
+        right, because the indenting had not moved.
+        """
         step = self.current_step()
         if step is None:
             return
-        copied = json.loads(json.dumps(step))  # deep: regions and colors are lists
+        first, after = step_defs.block_of(self.sequence.steps, self.selected)
+        block = self.sequence.steps[self.selected:max(self.selected + 1, after)]
+        copies = [self._a_copy_of(one) for one in block]
 
-        # Two rows reading exactly the same thing are impossible to tell apart.
-        # Only worth marking a name you chose yourself; a default one already
-        # repeats all over the list.
+        at = self.selected + len(block)
+        self.sequence.steps[at:at] = copies
+        self.mark_dirty()
+        self.refresh_list(keep=at)
+        held = len(copies) - 1
+        carried = f", and the {held} step(s) it guards" if held else ""
+        self.log(f"Duplicated {step_defs.location(self.sequence.steps, at)}"
+                 f"{carried}. Change the copy to suit.", "muted")
+
+    @staticmethod
+    def _a_copy_of(step: dict[str, Any]) -> dict[str, Any]:
+        """A deep copy, marked as a copy if it has a name of its own.
+
+        Two rows reading exactly the same thing are impossible to tell apart.
+        Only worth marking a name you chose yourself; a default one already
+        repeats all over the list.
+        """
+        copied = json.loads(json.dumps(step))  # deep: regions and colors are lists
         step_type = step_defs.STEP_TYPES.get(copied.get("type", ""))
         name = str(copied.get("name") or "").strip()
         if name and (step_type is None or name != step_type.label):
             copied["name"] = f"{name} copy"
-
-        at = self.selected + 1
-        self.sequence.steps.insert(at, copied)
-        self.mark_dirty()
-        self.refresh_list(keep=at)
-        self.log(f"Duplicated {step_defs.location(self.sequence.steps, at)}. "
-                 "Change its image or position to suit.", "muted")
+        return copied
 
     def remove(self) -> None:
         step = self.current_step()
@@ -1485,6 +1502,17 @@ class App:
         """Put the selected step under the one above it."""
         step = self.current_step()
         if step is None or step_defs.indent_of(step):
+            return
+        # Only one level of indenting exists, so a check cannot be indented and
+        # still own a group. Doing it anyway left its group at the same indent
+        # with a different check above, which silently made those steps depend
+        # on a condition nobody chose for them.
+        first, after = step_defs.block_of(self.sequence.steps, self.selected)
+        if after > first:
+            self.log(f"'{step.get('name') or step['type']}' guards the "
+                     f"{after - first} step(s) indented under it. Indenting it "
+                     "would hand that group to the check above instead. Move "
+                     "those steps back out first.", "warn")
             return
         above = self.selected - 1
         while above >= 0 and step_defs.indent_of(self.sequence.steps[above]):

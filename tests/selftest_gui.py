@@ -570,7 +570,45 @@ def check_duplicate_step():
             print("  (Ctrl+D not checked: the entry could not take focus)")
     root.withdraw()
 
-    print("Duplicate ok: settings copied, copy named apart, selected, Ctrl+D works")
+    # A check comes with its group. Copying it on its own put the copy between
+    # the check and the steps it guarded, so the group ended up belonging to
+    # the copy and the original guarded nothing - with the indenting unmoved,
+    # so the list looked exactly as it had before.
+    check = dict(step_defs.new_step("wait_for_image"), name="Is it there")
+    check["on_timeout"] = "skip_block"
+    app.sequence = engine_mod.Sequence(name="groups", steps=[
+        check,
+        dict(step_defs.new_step("click_box"), name="Act one", indent=1),
+        dict(step_defs.new_step("click_box"), name="Act two", indent=1),
+        dict(step_defs.new_step("press_key"), name="Afterwards"),
+    ])
+    app.refresh_list(keep=0)
+    app.selected = 0
+    root.update()
+    app.duplicate()
+    root.update()
+
+    names = [s.get("name") for s in app.sequence.steps]
+    if names != ["Is it there", "Act one", "Act two", "Is it there copy",
+                 "Act one copy", "Act two copy", "Afterwards"]:
+        problems.append(f"duplicating a check did not carry its group: {names}")
+    else:
+        steps = app.sequence.steps
+        for index, wanted in ((1, 0), (2, 0), (4, 3), (5, 3)):
+            owner = step_defs.owner_of(steps, index)
+            if owner != wanted:
+                problems.append(
+                    f"{names[index]!r} is guarded by "
+                    f"{names[owner] if owner is not None else None!r}, "
+                    f"expected {names[wanted]!r}")
+        if step_defs.block_of(steps, 0) != (1, 3):
+            problems.append("the original check lost its group to the copy")
+        if app.selected != 3:
+            problems.append(f"the copied check was not selected "
+                            f"(selection is {app.selected})")
+
+    print("Duplicate ok: settings and group copied, copy named apart, "
+          "selected, Ctrl+D works")
     return problems
 
 
@@ -1236,6 +1274,29 @@ def check_indenting_steps():
     if step_defs.indent_of(check):
         problems.append("the first step was indented under nothing")
 
+    # 2b. Nor can a check that owns a group be indented. Only one level exists,
+    # so it would stop owning anything while its group stayed put at the same
+    # indent - now answering to whichever check sits above.
+    app.sequence = engine_mod.Sequence(name="owners", steps=[
+        dict(check, name="Outer"),
+        dict(check, name="Inner"),
+        dict(action, indent=1),
+    ])
+    app.refresh_list(keep=1)
+    app.selected = 1
+    root.update()
+    app.indent()
+    root.update()
+    if step_defs.indent_of(app.sequence.steps[1]):
+        problems.append("a check that owns a group was allowed to be indented, "
+                        "handing its group to the check above")
+    app.sequence = engine_mod.Sequence(name="indents",
+                                       steps=[check, action, later])
+    app.refresh_list(keep=1)
+    app.selected = 1
+    app.indent()
+    root.update()
+
     # 3. outdent puts it back, leaving no leftover key in the file
     app.selected = 1
     app.outdent()
@@ -1544,21 +1605,40 @@ def check_the_list_buttons():
     elif sorted(movement[0]) != sorted(["↑", "↓", "→", "←"]):
         problems.append(f"the arrow row holds {movement[0]}")
 
-    # The button has to say what it will do, not what the state is.
-    app.sequence = engine_mod.Sequence(
-        name="buttons", steps=[step_defs.new_step("press_key")])
+    # The button has to say what it will do, not what the state is, and it has
+    # to follow the highlighted step rather than only the last press.
+    app.sequence = engine_mod.Sequence(name="buttons", steps=[
+        dict(step_defs.new_step("press_key"), name="Live one"),
+        dict(step_defs.new_step("click_box"), name="Switched off",
+             enabled=False),
+    ])
     app.refresh_list(keep=0)
     root.update()
-    if str(app.toggle_button.cget("text")) != "Turn off":
-        problems.append(f"a live step offers "
-                        f"{app.toggle_button.cget('text')!r}, wanted 'Turn off'")
+    for pick, wanted in ((0, "Turn off"), (1, "Turn on"),
+                         (0, "Turn off"), (1, "Turn on")):
+        app.selected = pick
+        app.build_editor()
+        root.update()
+        got = str(app.toggle_button.cget("text"))
+        if got != wanted:
+            problems.append(f"selecting {app.sequence.steps[pick]['name']!r} "
+                            f"offers {got!r}, wanted {wanted!r}")
+    # And pressing it flips the label, because the step it describes changed.
+    app.selected = 0
+    app.build_editor()
     app.toggle_enabled()
     root.update()
     if str(app.toggle_button.cget("text")) != "Turn on":
-        problems.append(f"a switched-off step offers "
-                        f"{app.toggle_button.cget('text')!r}, wanted 'Turn on'")
+        problems.append(f"after switching a step off the button still offers "
+                        f"{app.toggle_button.cget('text')!r}")
     app.toggle_enabled()
     root.update()
+    # Nothing selected leaves nothing to switch.
+    app.selected = -1
+    app.build_editor()
+    root.update()
+    if str(app.toggle_button.cget("state")) != "disabled":
+        problems.append("the on/off button stayed live with no step selected")
 
     # And the line under the list obeys the Hints box.
     was = app.show_hints.get()
