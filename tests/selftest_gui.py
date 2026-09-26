@@ -21,6 +21,15 @@ from pixie.core import steps as step_defs
 
 failures = []
 
+# Some checks need a genuinely visible, focused window: Tk only delivers key
+# events to a window that has focus, and a canvas has no size until it is
+# mapped. Those windows appear on screen and go away again, which looks like
+# something has gone wrong if you are not expecting it. Say so up front.
+print("Windows will appear and disappear during this run. Focus and layout "
+      "cannot be checked on a hidden window.")
+print("Clicking or typing while it runs can disturb those checks; they retry, "
+      "and say so when they do.\n")
+
 root = tk.Tk()
 root.withdraw()  # never actually show it
 app = gui.App(root)
@@ -903,6 +912,7 @@ def check_what_matches_window():
     root.update()
     try:
         viewer = gui.show_matches(root, picture, kept, dropped, step)
+        viewer.window.withdraw()   # read, not looked at: keep it off screen
         root.update()
         shown = [w for w in _descendants(viewer.window) if isinstance(w, tk.Text)]
         if not shown:
@@ -1479,6 +1489,7 @@ def check_settings_hints_can_be_hidden():
     problems = []
     box = tk.BooleanVar(value=False)
     dialog = gui.SettingsDialog(root, engine_mod.Settings(), 1.0, show_hints=box)
+    dialog.window.withdraw()       # measured, not looked at
     try:
         if len(dialog.hints) < 10:
             problems.append(f"only {len(dialog.hints)} paragraphs found in "

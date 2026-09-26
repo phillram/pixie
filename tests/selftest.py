@@ -14,18 +14,27 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from typing import Any
 
 import cv2
 import numpy as np
 
 import _bootstrap  # noqa: F401  (sys.path)
 
+import _steady
+
+
+class _Disturbed(Exception):
+    """The desktop was in use, so the check could not be carried out."""
+
 from pixie.core import engine as engine_mod
 from pixie.system import screen
 from pixie.core import steps as step_defs
 
 PROJECT_DIR = Path(__file__).resolve().parent
-CROP = (300, 300, 120, 60)  # x, y, w, h -- an arbitrary but non-flat patch
+# Where the beacon is painted, and how big: x, y, w, h. Well inside any
+# desktop worth running on, and no flatter than random noise can be.
+BEACON = (640, 480, 120, 60)
 
 
 def main() -> int:
@@ -44,7 +53,18 @@ def main() -> int:
 
     with tempfile.TemporaryDirectory() as tmp:
         tpl_path = Path(tmp) / "template.png"
-        x, y, w, h = _distinctive_crop(frame)
+        # A beacon painted into a copy of the real desktop, rather than a patch
+        # cropped out of it. A cropped patch is only as distinctive as whatever
+        # happened to be on screen, and on a quiet desktop the best patch
+        # available is flat -- at which point TM_CCOEFF_NORMED scores 1.0
+        # everywhere, the match lands at (0, 0), and the "it appears more than
+        # once, so either is correct" escape hatch waives the whole assertion.
+        # It was doing exactly that: 15,885,661 matches, one per position.
+        # Noise cannot repeat, so the answer is now a single known point.
+        x, y, w, h = BEACON
+        frame = frame.copy()
+        frame[y : y + h, x : x + w] = np.random.default_rng(7).integers(
+            0, 256, (h, w, 3), dtype=np.uint8)
         cv2.imwrite(str(tpl_path), frame[y : y + h, x : x + w])
 
         # Random noise: something guaranteed not to be anywhere on screen, so
@@ -53,49 +73,45 @@ def main() -> int:
         cv2.imwrite(str(absent_path),
                     np.random.randint(0, 256, (40, 40, 3), dtype=np.uint8))
 
-        # Match against the *same* frame we cropped from. Re-grabbing would
-        # race the live desktop: a cursor blink or an animation between the two
-        # captures can shift the best match by a pixel or two, which says
-        # nothing about whether the matcher works.
-        original_grab = screen.grab
-        screen.grab = lambda _region=None: frame
-        try:
+        # Everything below works from the *one* frame we cropped from. The live
+        # desktop moves: a caret blinks, a clock ticks, a notification slides
+        # in. Re-grabbing between the crop and the match shifted the best match
+        # by a pixel; re-grabbing between sampling a color and asking whether
+        # that color is still there failed outright, at tolerance 0, having
+        # proved nothing about the matcher and everything about the screensaver.
+        with _steady.frozen_screen(screen, frame, (left, top)):
             started = time.perf_counter()
             match = screen.find_template(screen.load_template(tpl_path), confidence=0.85)
             elapsed = (time.perf_counter() - started) * 1000
-        finally:
-            screen.grab = original_grab
 
-        expected = (x + left, y + top)
-        if match is None:
-            failures.append("template matching found nothing")
-            print("Template match  : FAILED (no match)")
-        else:
-            print(f"Template match  : ({match.x}, {match.y}) score {match.score:.4f}"
-                  f"  ({elapsed:.0f} ms)")
-            if (match.x, match.y) != expected:
-                # The crop comes off the real desktop, and a desktop can show
-                # the same thing twice - a repeated panel, a blank stretch.
-                # Landing on an identical copy is not the matcher failing.
+            expected = (x + left, y + top)
+            if match is None:
+                failures.append("template matching found nothing")
+                print("Template match  : FAILED (no match)")
+            else:
+                print(f"Template match  : ({match.x}, {match.y}) score {match.score:.4f}"
+                      f"  ({elapsed:.0f} ms)")
+                if (match.x, match.y) != expected:
+                    failures.append(
+                        f"matched at {(match.x, match.y)}, expected {expected}")
+                # ...and there is exactly one answer, which is what makes the
+                # line above worth asserting.
                 scores = cv2.matchTemplate(frame, screen.load_template(tpl_path),
                                            cv2.TM_CCOEFF_NORMED)
                 copies = int((scores >= 0.9999).sum())
-                if copies > 1:
-                    print(f"                  (that crop appears {copies} times "
-                          f"on screen, so either is correct)")
-                else:
-                    failures.append(
-                        f"matched at {(match.x, match.y)}, expected {expected}")
+                if copies != 1:
+                    failures.append(f"the beacon matched {copies} places, so "
+                                    "where it was found proves nothing")
 
-            cx, cy = match.center
-            color = screen.pixel_color(cx, cy)
-            print(f"Color sampling : RGB{color} at {cx},{cy}")
-            if not screen.color_present(cx, cy, color, tolerance=0, radius=0):
-                failures.append("exact color match failed")
-            if screen.color_present(cx, cy, tuple(255 - v for v in color), 5, 0):
-                failures.append("inverse color matched when it should not have")
+                cx, cy = match.center
+                color = screen.pixel_color(cx, cy)
+                print(f"Color sampling : RGB{color} at {cx},{cy}")
+                if not screen.color_present(cx, cy, color, tolerance=0, radius=0):
+                    failures.append("exact color match failed")
+                if screen.color_present(cx, cy, tuple(255 - v for v in color), 5, 0):
+                    failures.append("inverse color matched when it should not have")
 
-            failures.extend(_check_engine(tpl_path, absent_path, color, (cx, cy)))
+                failures.extend(_check_engine(tpl_path, absent_path, color, (cx, cy)))
 
     failures.extend(_check_color_search())
     failures.extend(_check_hue_matching())
@@ -2181,38 +2197,48 @@ def _check_keyboard() -> list[str]:
     root.title("Pixie key test")
     root.geometry("260x90+60+60")
     root.bind("<Key>", lambda event: received.append(event.keysym))
-    root.focus_force()
-    root.update()
-    time.sleep(0.4)
-    root.update()
 
-    foreground = ctypes.windll.user32.GetForegroundWindow()
-    ours = ctypes.windll.user32.GetParent(root.winfo_id()) or root.winfo_id()
-    if foreground != ours:
-        root.destroy()
-        print("Key sending    : SKIPPED (test window could not take focus)")
-        return []
+    def attempt() -> list[str]:
+        """Take focus, send, and check we still had it.
 
-    kb.press("Q", presses=2, interval=0.06)
-    kb.press("Enter")
-
-    deadline = time.time() + 3.0
-    while time.time() < deadline and len(received) < 3:
+        Focus can be taken between winning it and the keys going out, and then
+        the presses land somewhere else and this reports an empty list -- which
+        reads as "keyboard sending is broken" and never is.
+        """
+        received.clear()
+        root.focus_force()
         root.update()
-        time.sleep(0.02)
+        time.sleep(0.4)
+        root.update()
+        if not _steady.has_focus(root, ctypes):
+            return [_steady.DISTURBED]
+
+        kb.press("Q", presses=2, interval=0.06)
+        kb.press("Enter")
+        deadline = time.time() + 2.0
+        while time.time() < deadline and len(received) < 3:
+            root.update()
+            time.sleep(0.02)
+
+        got = [k.lower() for k in received]
+        if not _steady.has_focus(root, ctypes):
+            return [_steady.DISTURBED]
+        problems = []
+        if got.count("q") < 2:
+            problems.append(f"expected two 'q' presses, got {list(received)}")
+        # A window message cannot tell the main Enter from the numpad one -
+        # both report VK_RETURN, so both arrive here as "return". Which one we
+        # actually sent is checked below, at the flags.
+        if "return" not in got:
+            problems.append(f"expected Enter, got {list(received)}")
+        return problems
+
+    problems, used = _steady.retried(attempt, tries=3)
+    seen = list(received)
     root.destroy()
 
-    got = [k.lower() for k in received]
-    print(f"Key sending    : received {received}")
-    problems = []
-    if got.count("q") < 2:
-        problems.append(f"expected two 'q' presses, got {received}")
-    # A window message cannot tell the main Enter from the numpad one - both
-    # report VK_RETURN, so both arrive here as "return". Which one we actually
-    # sent is checked below, at the flags.
-    if "return" not in got:
-        problems.append(f"expected Enter, got {received}")
-    return problems
+    _steady.outcome("Key sending    ", problems, used, f"received {seen}")
+    return [] if _steady.unrunnable(problems) else problems
 
 
 def _check_enter_is_the_main_one() -> list[str]:
@@ -3136,32 +3162,54 @@ def _check_mouse_movement_is_injected() -> list[str]:
         (left + width // 2, top + height // 2),
         (left + width // 3, top + height // 4),
     ]
-    try:
+
+    def attempt() -> list[str]:
+        """One pass, abandoned if the pointer is being driven by someone else.
+
+        A hand on the mouse makes every landing wrong, and the arithmetic this
+        checks cannot be judged through that. Missing on our own is a failure;
+        missing while the cursor is moving by itself is no answer at all.
+        """
         missed = []
+
+        def landed_on(target: tuple[int, int]) -> bool:
+            if ms.position() == target:
+                return True
+            if _steady.someone_else_is_moving(ms):
+                raise _Disturbed
+            missed.append((target, ms.position()))
+            return False
+
         for target in tried:
             ms.move_to(*target)
             time.sleep(0.01)
-            landed = ms.position()
-            if landed != target:
-                missed.append((target, landed))
+            landed_on(target)
 
         # ...and a glide has to arrive exactly too, not just nearby.
         ms.move_to(left + 10, top + 10)
         ms.glide_to(*tried[2], seconds=0)
-        if ms.position() != tried[2]:
-            missed.append((tried[2], ms.position()))
+        landed_on(tried[2])
 
         # The settle leaves the cursor where it found it.
+        ms.move_to(*tried[2])
         ms.settle()
-        if ms.position() != tried[2]:
-            missed.append(("after settle", ms.position()))
+        landed_on(tried[2])
+        return [f"movement landed off target: {missed}"] if missed else []
+
+    def guarded() -> list[str]:
+        try:
+            return attempt()
+        except _Disturbed:
+            return [_steady.DISTURBED]
+
+    try:
+        found, used = _steady.retried(guarded)
     finally:
         ms.move_to(*was)
-
-    if missed:
-        problems.append(f"movement landed off target: {missed}")
-    print(f"Mouse moving   : {len(tried)} points across {width}x{height} "
-          f"hit exactly, glide and settle land true")
+    problems.extend([] if _steady.unrunnable(found) else found)
+    _steady.outcome("Mouse moving   ", found, used,
+                    f"{len(tried)} points across {width}x{height} hit exactly, "
+                    "glide and settle land true")
 
     # SendInput is what makes it visible; SetCursorPos alone is the old bug.
     import inspect
@@ -3189,51 +3237,48 @@ def _check_mouse() -> list[str]:
     time.sleep(0.4)
     root.update()
 
-    foreground = ctypes.windll.user32.GetForegroundWindow()
-    ours = ctypes.windll.user32.GetParent(root.winfo_id()) or root.winfo_id()
-    if foreground != ours:
-        root.destroy()
-        print("Mouse clicking : SKIPPED (test window could not take focus)")
-        return []
-
     restore_to = ms.position()
     target = (root.winfo_rootx() + 130, root.winfo_rooty() + 70)
-    # Two clicks close enough together that Windows reads them as one
-    # double-click. The gap is the sequence default, well inside its limit.
-    ms.click(*target, clicks=2, interval=0.06)
 
-    deadline = time.time() + 3.0
-    while time.time() < deadline and "double" not in events:
+    def attempt() -> list[str]:
+        """Focus can be taken between the check and the click, so re-check it.
+
+        Windows also coalesces a second double-click that arrives too soon
+        after the first, so each attempt waits out the double-click time before
+        trying again. Without that, a retry of a genuinely working click could
+        report no double-click and look like a fault.
+        """
+        events.clear()
+        root.focus_force()
         root.update()
-        time.sleep(0.02)
+        time.sleep(0.4)
+        root.update()
+        if not _steady.has_focus(root, ctypes):
+            return [_steady.DISTURBED]
+
+        # Two clicks close enough together that Windows reads them as one
+        # double-click. The gap is the sequence default, well inside its limit.
+        ms.click(*target, clicks=2, interval=0.06)
+        deadline = time.time() + 2.0
+        while time.time() < deadline and "double" not in events:
+            root.update()
+            time.sleep(0.02)
+        if "double" not in events:
+            if not _steady.has_focus(root, ctypes):
+                return [_steady.DISTURBED]
+            time.sleep(0.6)     # past the double-click time, before retrying
+            return [f"double-click did not register (got {list(events)})"]
+        return []
+
+    problems, used = _steady.retried(attempt, tries=3)
+    seen = list(events)
     root.destroy()
     ms.move_to(*restore_to)  # put the pointer back where it was
 
-    print(f"Mouse clicking : {events.count('click')} clicks, "
-          f"{events.count('double')} double at {target}")
-    if "double" not in events:
-        return [f"double-click did not register (got {events})"]
-    return []
-
-
-def _distinctive_crop(frame: np.ndarray) -> tuple[int, int, int, int]:
-    """Pick a patch of screen busy enough to have exactly one match.
-
-    A crop of flat background matches equally well in a thousand places, so
-    asserting *where* it was found would be a coin toss. Take the highest
-    contrast candidate instead, which makes this test about the matcher rather
-    than about what happens to be on the desktop.
-    """
-    height, width = frame.shape[:2]
-    w, h = CROP[2], CROP[3]
-    best, best_score = (300, 300, w, h), -1.0
-    for y in range(80, min(height - h, 1400), 190):
-        for x in range(80, min(width - w, 2000), 230):
-            patch = frame[y : y + h, x : x + w]
-            score = float(patch.std())
-            if score > best_score:
-                best, best_score = (x, y, w, h), score
-    return best
+    _steady.outcome("Mouse clicking ", problems, used,
+                    f"{seen.count('click')} clicks, {seen.count('double')} "
+                    f"double at {target}")
+    return [] if _steady.unrunnable(problems) else problems
 
 
 def _check_color_search() -> list[str]:
@@ -3327,9 +3372,15 @@ def _check_engine(template: Path, absent: Path, color: tuple[int, int, int],
              "pos": [123, 456], "clicks": 1, "button": "left"},
             {"type": "wait", "name": "Settle", "enabled": True, "seconds": 0.1},
         ],
+        # No failsafe and no abort key. Both are real features with their own
+        # checks, and leaving them on here meant the whole run was abandoned at
+        # the first guard if the cursor happened to be resting in the top-left
+        # corner -- reported as "engine completed 0 cycles", which reads like
+        # the engine is broken and is only ever where the mouse was.
         settings=engine_mod.Settings(cycle_pause_min=0.1, cycle_pause_max=0.1,
                                      step_pause_min=0.0, step_pause_max=0.0,
-                                     poll_interval=0.1),
+                                     poll_interval=0.1, failsafe_corner=False,
+                                     abort_key=""),
     )
 
     problems = sequence.problems()
