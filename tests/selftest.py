@@ -144,6 +144,8 @@ def main() -> int:
     failures.extend(_check_where_a_patch_sits_can_be_required())
     failures.extend(_check_a_section_with_nothing_switched_on())
     failures.extend(_check_every_wait_respects_the_cap())
+    failures.extend(_check_it_must_stay_on_screen())
+    failures.extend(_check_an_unfinished_group_under_a_switched_off_check())
     failures.extend(_check_declared_defaults())
     failures.extend(_check_click_box())
     failures.extend(_check_keyboard())
@@ -2080,6 +2082,97 @@ def _check_every_wait_respects_the_cap() -> list[str]:
 
     if not waiting:
         problems.append("no step types declare a timeout, which cannot be right")
+    return problems
+
+
+def _check_it_must_stay_on_screen() -> list[str]:
+    """'Only if it stays for' acts only on something that never went away.
+
+    Present at the start and at the end is not enough: a warning that clears
+    and comes back is a different warning, so every look in between counts.
+    """
+    problems = []
+    said: list[str] = []
+    settings = engine_mod.Settings(poll_interval=0.05, wait_timeout=1.0)
+    runner = engine_mod.Engine(
+        engine_mod.Sequence(name="stays", settings=settings),
+        emit=lambda event: said.append(str(event.get("message", ""))),
+        dry_run=True)
+    step = dict(step_defs.new_step("wait_for_color"), pos=[10, 10],
+                color=[255, 0, 0], stays_for=0.4)
+
+    def run_with(looks):
+        """Run the step with the color there or not at each look, in turn."""
+        answers = iter(looks)
+        original = screen.color_present
+        screen.color_present = lambda *_a, **_k: next(answers, True)
+        said.clear()
+        started = time.monotonic()
+        try:
+            return runner.run_step(step), time.monotonic() - started
+        finally:
+            screen.color_present = original
+
+    outcome, took = run_with([True])
+    if outcome != "ok":
+        problems.append(f"something that stayed the whole 0.4s came out {outcome!r}")
+    elif took < 0.4:
+        problems.append(f"it acted after {took:.2f}s, before the 0.4s was up")
+
+    # Gone for one look in the middle, back by the end.
+    outcome, took = run_with([True, True, False, True])
+    if outcome != "timeout":
+        problems.append("something that went away for one look still counted "
+                        "as having stayed")
+    if not any("went away" in line for line in said):
+        problems.append(f"leaving early was not reported: {said}")
+    if any("not seen" in line for line in said):
+        problems.append("something that appeared and left was reported as "
+                        "never having been seen")
+    if took >= 0.4:
+        problems.append(f"it watched for {took:.2f}s after the thing had gone")
+
+    # Unset, it acts on the first sighting and does not look again.
+    step["stays_for"] = None
+    outcome, took = run_with([True, False])
+    if outcome != "ok" or took > 0.2:
+        problems.append(f"with no stay set it came out {outcome!r} after "
+                        f"{took:.2f}s, expected 'ok' at once")
+
+    # Every step that looks for something can be told to wait for it to stay.
+    missing = [key for key, step_type in step_defs.STEP_TYPES.items()
+               if "timeout" in step_type.field_map()
+               and "stays_for" not in step_type.field_map()]
+    if missing:
+        problems.append(f"no 'Only if it stays for' on {missing}")
+    print("Stays on screen : acts after the whole wait, not on a blink, and "
+          "at once when unset")
+    return problems
+
+
+def _check_an_unfinished_group_under_a_switched_off_check() -> list[str]:
+    """A half-built step under a switched-off check must not block the run.
+
+    Switching its check off is how you park a group you have not finished:
+    the run skips the group, the list dims it, and refusing to start because
+    one of its steps has no box yet contradicted both.
+    """
+    look = dict(step_defs.new_step("wait_for_image"), image="a.png",
+                on_timeout="skip_block")
+    unfinished = dict(step_defs.new_step("click_box"), indent=1)  # no box
+    sequence = engine_mod.Sequence(name="parked", steps=[
+        dict(look, enabled=False), unfinished, dict(look)])
+
+    problems = []
+    if sequence.problems():
+        problems.append("a step under a switched-off check blocked the run: "
+                        f"{sequence.problems()}")
+    sequence.steps[0]["enabled"] = True
+    if not sequence.problems():
+        problems.append("with its check back on, a click with no box was "
+                        "let through")
+    print("Parked groups   : a half-built step under a switched-off check "
+          "does not block the run")
     return problems
 
 

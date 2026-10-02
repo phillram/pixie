@@ -2727,6 +2727,12 @@ class App:
                 landed = self.last_click or (x, y)
                 recorded.append((landed[0], landed[1], what, (x, y)))
 
+            def _stays(self, one, look, found, what):  # noqa: ANN001
+                # The window is hidden and the GUI is waiting on this, so a
+                # minute of watching would look like a hang. Where it would
+                # click does not depend on how long it was watched for.
+                return found
+
         # No pauses and no parking: this is a rehearsal, not a run.
         settings = engine_mod.Settings.from_dict(vars(self.sequence.settings))
         settings.step_pause_min = settings.step_pause_max = 0.0
@@ -2741,6 +2747,9 @@ class App:
         lines: list[tuple[str, str]] = []
         for x, y, what, _aimed in recorded:
             lines.append((f"Would click {x}, {y}  -  {what}", "good"))
+        if any(one.get("stays_for") for one in steps):
+            lines.append(("A run would first watch that it stays on screen; "
+                          "this did not wait to find out.", "muted"))
         if len(steps) > 1:
             lines.append((f"After running '{steps[0].get('name')}' first, which "
                           "is what it clicks the result of.", "muted"))

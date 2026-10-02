@@ -95,6 +95,10 @@ match boxed around it. Runs the step for real, intercepting only the click.
 | Press a key | Send a keystroke, optionally several times |
 | Wait a moment | Pause for a fixed or random length of time |
 
+Image and color steps can be told to act only once their target has stayed
+on screen for a set time, so something that appears and clears by itself is
+left alone.
+
 Indent steps under a check with Ctrl+Right and they only run when that check
 finds something. Split a sequence into sections, one per screen, and each
 repeats until its first step stops matching. See

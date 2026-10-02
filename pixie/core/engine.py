@@ -354,7 +354,11 @@ class Sequence:
             return ["The sequence has no enabled steps."]
         found: list[str] = []
         for index, step in enumerate(self.steps):
-            if step.get("enabled", True):
+            # A step under a switched-off check never runs either, so a
+            # half-built one there must not hold up the run. Leaving it was
+            # how you parked an unfinished group: switch its check off.
+            if (step.get("enabled", True)
+                    and not step_defs.is_inert(self.steps, index)):
                 found.extend(step_defs.validate(
                     step, step_defs.location(self.steps, index)))
         return found
@@ -420,6 +424,10 @@ class Engine:
         # Said once if the stop key turns out to be unwatchable, rather than
         # on every guard, which is several times a second.
         self._warned_about_stop_key = False
+        # Whether the step that just ran found its target and then lost it
+        # before it had stayed long enough. Its handler would otherwise go on
+        # to say it "did not appear", which is the opposite of what happened.
+        self.went_away = False
 
     # -- plumbing --------------------------------------------------------
 
@@ -615,10 +623,7 @@ class Engine:
         deadline = time.monotonic() + timeout if timeout > 0 else math.inf
         started = time.monotonic()
         announced = started
-        # How long to leave between looks. 0 means "as often as we sensibly
-        # can", which is the guard's own pace rather than a spin.
-        poll = float(self.sequence.settings.poll_interval)
-        poll = GUARD_INTERVAL if poll <= 0 else poll
+        poll = self._poll_interval()
 
         while True:
             self._guard()
@@ -655,6 +660,52 @@ class Engine:
                 time.sleep(min(GUARD_INTERVAL, resume - now))
                 self._guard()
 
+    def _poll_interval(self) -> float:
+        """How long to leave between looks. 0 means "as often as we sensibly
+        can", which is the guard's own pace rather than a spin."""
+        poll = float(self.sequence.settings.poll_interval)
+        return GUARD_INTERVAL if poll <= 0 else poll
+
+    def _stays(self, step: dict[str, Any], look: Callable[[], Any],
+               found: Any, what: str) -> Any:
+        """Keep looking at something just found, until it has stayed long enough.
+
+        Returns the last sighting, or None if any look in between came back
+        empty. Being there at the start and at the end is not the same as
+        staying: a warning that clears and comes back is a different warning.
+
+        Not capped by the section's wait limit. That limit is about how long
+        to hunt for something, and capping this would quietly turn "only if
+        it is still up after a minute" into "only if it is up for 3 seconds".
+        """
+        seconds = float(self._value(step, "stays_for", None) or 0)
+        if found is None or seconds <= 0:
+            return found
+        self.log(f"    {what} is there - watching that it stays for "
+                 f"{seconds:g}s", "muted")
+        poll = self._poll_interval()
+        started = time.monotonic()
+        deadline = started + seconds
+        announced = started
+        while True:
+            now = time.monotonic()
+            if now >= deadline:
+                self.log(f"    still there after {seconds:g}s")
+                return found
+            if now - announced >= IDLE_NOTICE_SECONDS:
+                announced = now
+                self.log(f"    {what} still there, {now - started:.0f}s of "
+                         f"{seconds:g}s", "muted")
+            self._sleep(min(poll, deadline - now))
+            again = look()
+            if again is None or again is False:
+                self.went_away = True
+                self.log(f"    {what} went away after "
+                         f"{time.monotonic() - started:.1f}s, before the "
+                         f"{seconds:g}s it had to stay", "warn")
+                return None
+            found = again
+
     def _find(self, step: dict[str, Any], timeout: float) -> screen.Match | None:
         """Wait for the step's image to appear."""
         template = self._template(step["image"])
@@ -674,7 +725,8 @@ class Engine:
         match = self._poll_until(look, timeout, name)
         if match is None:
             self._how_close(seen[0], confidence)
-        return match
+            return None
+        return self._stays(step, look, match, name)
 
     def _how_close(self, score: float, confidence: float) -> None:
         """Say how well the picture did match, when it did not match enough.
@@ -701,17 +753,22 @@ class Engine:
     def _do_wait_for_color(self, step: dict[str, Any]) -> str:
         x, y = step["pos"]
         target = tuple(step["color"])
-        found = self._poll_until(
-            lambda: screen.color_present(
+
+        def look():
+            return screen.color_present(
                 x, y, target,
                 float(self._value(step, "tolerance", 30)),
                 int(self._value(step, "radius", 3)),
                 self._value(step, "mode", "any"),
-            ) or None,
-            self._timeout(step),
-            f"RGB{target} at {x}, {y}",
-        )
+            ) or None
+
+        what = f"RGB{target} at {x}, {y}"
+        found = self._stays(step, look,
+                            self._poll_until(look, self._timeout(step), what),
+                            what)
         if found is None:
+            if self.went_away:
+                return "timeout"
             self.log(f"    color RGB{target} not seen at {x}, {y} "
                      f"(saw RGB{screen.pixel_color(x, y)}) "
                      f"{self._gave_up(self._timeout(step))}", "warn")
@@ -890,19 +947,26 @@ class Engine:
         how = "hue of " if Engine._value(step, "match", "hue") == "hue" else ""
         return f"{how}RGB{target} in that area"
 
+    def _find_color(self, step: dict[str, Any],
+                    region: tuple[int, int, int, int]) -> Any:
+        """Wait for the step's color in an area, and for it to stay if asked."""
+        look = lambda: self._look_for_color(step, region)  # noqa: E731
+        what = self._color_description(step)
+        return self._stays(step, look,
+                           self._poll_until(look, self._timeout(step), what),
+                           what)
+
     def _do_click_color_if_present(self, step: dict[str, Any]) -> str:
         region = self._region(step.get("region"))
         if region is None:
             self.log("    no area set to search in", "error")
             return "ok"  # optional step: don't derail the run
 
-        hit = self._poll_until(
-            lambda: self._look_for_color(step, region),
-            self._timeout(step),
-            self._color_description(step),
-        )
+        hit = self._find_color(step, region)
         if hit is None:
             self._forget_match()
+            if self.went_away:
+                return "ok"
             self.log(f"    no {self._color_description(step)} "
                      f"{self._gave_up(self._timeout(step))}, skipping")
             return "ok"
@@ -921,17 +985,15 @@ class Engine:
         if region is None:
             self.log("    no area set to search in", "error")
             return "timeout"
-        hit = self._poll_until(
-            lambda: self._look_for_color(step, region),
-            self._timeout(step),
-            self._color_description(step),
-        )
+        hit = self._find_color(step, region)
         target = tuple(step["color"])
         min_pixels = int(self._value(step, "min_pixels", 40))
         if hit is None:
             # Don't leave a stale position behind for a later "click the last
             # thing found" to pick up and click somewhere wrong.
             self._forget_match()
+            if self.went_away:
+                return "timeout"
             self.log(f"    no patch of RGB{target} at least {min_pixels}px "
                      f"in that area {self._gave_up(self._timeout(step))}",
                      "warn")
@@ -950,6 +1012,8 @@ class Engine:
         match = self._find(step, waited)
         if match is None:
             self._forget_match()
+            if self.went_away:
+                return "timeout"
             self.log(f"    {Path(step['image']).name} did not appear "
                      f"{self._gave_up(waited)}", "warn")
             return "timeout"
@@ -963,6 +1027,8 @@ class Engine:
         match = self._find(step, waited)
         if match is None:
             self._forget_match()
+            if self.went_away:
+                return "timeout"
             self.log(f"    {Path(step['image']).name} did not appear "
                      f"{self._gave_up(waited)}", "warn")
             return "timeout"
@@ -977,6 +1043,8 @@ class Engine:
         match = self._find(step, self._timeout(step))
         if match is None:
             self._forget_match()
+            if self.went_away:
+                return "ok"
             self.log(f"    {Path(step['image']).name} not there "
                      f"{self._gave_up(self._timeout(step))}, skipping")
             return "ok"
@@ -1240,6 +1308,7 @@ class Engine:
 
     def run_step(self, step: dict[str, Any]) -> str:
         handler = getattr(self, f"_do_{step['type']}", None)
+        self.went_away = False
         if handler is None:
             self.log(f"    unknown step type {step['type']!r}, skipping", "error")
             return "ok"

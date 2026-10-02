@@ -215,6 +215,37 @@ skipped and the work carries on at 3.
 
 It can send the run to the same four places an `If it is not found` can.
 
+### Only if it stays on screen
+
+Every image and color step has `Only if it stays for (s)`. Leave it off and the
+step acts the moment it finds its target. Turn it on and, once the target
+appears, Pixie keeps looking for that many seconds. If the target goes away at
+any look, the step counts it as not found and its `If it is not found` applies.
+An optional click step skips its click.
+
+Use it for something that only matters when it lingers, such as a warning that
+is still up after a minute rather than one that clears by itself:
+
+```
+ 1. Click an image if it appears   warning.png, once it has stayed 60s
+```
+
+To click somewhere other than the image itself, guard the click:
+
+```
+ 1. Wait for an image              If it is not found: skip the steps indented under it
+                                   warning.png, once it has stayed 60s
+     ↳ 2. Click a fixed spot
+```
+
+`Give up after` still decides how long to wait for the target to appear in the
+first place. The stay is counted from when it is found, and `How often to
+re-check` sets how often Pixie looks while it waits.
+
+Nothing else in the sequence runs while Pixie waits, and a section's
+`Cap every wait in here` does not shorten it. `Show the click` does not wait for
+the stay. It shows where the click would land.
+
 ### When nothing is on screen to check
 
 Some states do not show up in pixels at all: a list with nothing left to act on

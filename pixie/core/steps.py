@@ -217,6 +217,15 @@ _TIMEOUT_HINT = (
     "find nothing, because their wait is paid on every pass. 0 waits "
     "forever."
 )
+_STAYS_HINT = (
+    "Only counts it as found once it has been on screen this long without "
+    "going away. Pixie keeps looking the whole time, and if it disappears "
+    "at any look, the step treats it as not found.\n"
+    "For something that matters only when it lingers: a warning still up "
+    "after a minute, rather than one that flashes and clears by itself. "
+    "The run waits here while it watches, and a section's cap on waits does "
+    "not shorten it."
+)
 _TIMEOUT_OFF = "Use the sequence-wide setting"
 _TIMEOUT_ON = "or instead, give up after"
 _JOIN_HINT = (
@@ -355,6 +364,13 @@ def _wait_summary(step: dict[str, Any]) -> str:
 
 # Reusable field groups -------------------------------------------------
 
+_STAYS_FIELD = Field(
+    "stays_for", "limit", "Only if it stays for (s)", None,
+    off_text="Act as soon as it appears",
+    on_text="or only once it has stayed on screen for", hint=_STAYS_HINT,
+)
+
+
 def _image_fields(on_timeout: str) -> tuple[Field, ...]:
     return (
         Field("image", "image", "Image", "", required=True,
@@ -366,6 +382,7 @@ def _image_fields(on_timeout: str) -> tuple[Field, ...]:
         Field("timeout", "limit", "Give up after (s)", None,
               falls_back_to="wait_timeout", off_text=_TIMEOUT_OFF,
               on_text=_TIMEOUT_ON, hint=_TIMEOUT_HINT),
+        _STAYS_FIELD,
         Field("on_timeout", "choice", "If it is not found, then", on_timeout, choices=ON_TIMEOUT),
     )
 
@@ -554,6 +571,7 @@ STEP_TYPES: dict[str, StepType] = {
             Field("timeout", "limit", "Give up after (s)", None,
                   falls_back_to="wait_timeout", off_text=_TIMEOUT_OFF,
                   on_text=_TIMEOUT_ON, hint=_TIMEOUT_HINT),
+            _STAYS_FIELD,
             Field("on_timeout", "choice", "If it never appears, then", "restart", choices=ON_TIMEOUT),
         ),
         describe=lambda s: f"Wait for color at {_point(s)}",
@@ -598,6 +616,7 @@ STEP_TYPES: dict[str, StepType] = {
             Field("timeout", "limit", "Give up after (s)", None,
                   falls_back_to="wait_timeout", off_text=_TIMEOUT_OFF,
                   on_text=_TIMEOUT_ON, hint=_TIMEOUT_HINT),
+            _STAYS_FIELD,
             Field("on_timeout", "choice", "If it never appears, then", "restart",
                   choices=ON_TIMEOUT),
         ),
@@ -641,6 +660,7 @@ STEP_TYPES: dict[str, StepType] = {
             Field("timeout", "limit", "Give it this long (s)", None,
                   falls_back_to="wait_timeout", off_text=_TIMEOUT_OFF,
                   on_text=_TIMEOUT_ON, hint=_TIMEOUT_HINT),
+            _STAYS_FIELD,
         ) + _CLICK_FIELDS,
         describe=lambda s: (f"If color appears, {_clicks_word(s).lower()} it"),
     ),
@@ -671,6 +691,7 @@ STEP_TYPES: dict[str, StepType] = {
             Field("timeout", "limit", "Give it this long (s)", None,
                   falls_back_to="wait_timeout", off_text=_TIMEOUT_OFF,
                   on_text=_TIMEOUT_ON, hint=_TIMEOUT_HINT),
+            _STAYS_FIELD,
         ) + _CLICK_FIELDS,
         describe=lambda s: f"If {_stem(s.get('image'))} appears, {_clicks_word(s).lower()} it",
     ),
@@ -818,9 +839,15 @@ def describe(step: dict[str, Any]) -> str:
     if step_type is None:
         return f"Unknown step type: {step.get('type')!r}"
     try:
-        return step_type.describe(step)
+        summary = step_type.describe(step)
     except Exception:  # noqa: BLE001 - a half-filled step must still render
         return step_type.label
+    # Said in the list, because a step that waits a minute to be sure looks
+    # exactly like one that acts at once, and the run is held up meanwhile.
+    stays = step.get("stays_for")
+    if stays and "stays_for" in step_type.field_map():
+        summary += f", once it has stayed {float(stays):g}s"
+    return summary
 
 
 def display_numbers(steps: list[dict[str, Any]]) -> list[int | None]:
